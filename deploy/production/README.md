@@ -70,13 +70,25 @@ $imageTag = "sha-$sha"
 
 ### Интерактивные секреты
 
+### Bootstrap stdin protocol
+
+`bootstrap-vps.sh` is invoked only by `bootstrap-production.ps1`. Its standard
+input is newline-delimited `NAME=BASE64_UTF8_VALUE` records. Do not run the
+remote helper manually and do not paste passwords into a terminal.
+
+При обычном режиме точный набор записей: `MONGO_ROOT_PASSWORD`,
+`MONGO_APP_PASSWORD`, `ADMIN_PASSWORD`, `TELEGRAM_BOT_TOKEN`,
+`ACTIONS_PUBLIC_KEY` и, для закрытого GHCR, `GHCR_PAT`. С `-NoTelegram`
+запись `TELEGRAM_BOT_TOKEN` не передаётся; удалённый скрипт отвергает её,
+чтобы режимы нельзя было случайно смешать.
+
 Скрипт не читает `.env` и не создаёт файл с введёнными секретами на Windows.
 Он дважды запросит, без отображения на экране:
 
 - пароль root MongoDB (минимум 24 символа);
 - пароль прикладного пользователя MongoDB (минимум 24 символа, другой);
 - пароль первого администратора панели;
-- токен Telegram-бота;
+- токен Telegram-бота, кроме запуска с `-NoTelegram`;
 - classic GitHub PAT с `read:packages`, только если GHCR-пакет закрыт.
 
 То есть оба пароля MongoDB задаёте вы в ходе запуска. До первого старта они
@@ -90,6 +102,11 @@ login` и не добавляется ни в GitHub, ни в `.env`.
 
 - `-PublicGhcr` — укажите, только если package GHCR действительно публичный:
   PAT тогда не запрашивается.
+- `-NoTelegram` — не запрашивает и не передаёт токен Telegram; постоянный
+  `.env` получает `TELEGRAM_BOT_TOKEN=''`, а контейнер `bot` запускается в
+  отключённом runtime без polling. Позднее включение Telegram требует
+  отдельного изменения `.env` и deploy. Добавьте `-NoTelegram` к обычной
+  команде bootstrap, если Telegram пока не нужен.
 - `-Resume` — продолжает **тот же** прерванный bootstrap: секреты будут
   запрошены повторно и должны быть прежними. Для уже завершённого VPS это
   health-only проверка без перезаписи `.env`, ключей, volume или сертификата.

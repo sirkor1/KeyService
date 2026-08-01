@@ -17,6 +17,11 @@ readonly MONGO_DATABASE='amnezia_vpn'
 readonly MONGO_ROOT_USER='amnezia_root'
 readonly MONGO_APP_USER='amnezia_app'
 
+if (( $# != 13 )); then
+  printf 'bootstrap: expected exactly 13 positional arguments.\n' >&2
+  exit 2
+fi
+
 release_archive=${1:?missing release archive path}
 public_ipv4=${2:?missing public IPv4}
 github_owner=${3:?missing GitHub owner}
@@ -25,10 +30,11 @@ deploy_path=${5:?missing deployment path}
 image_tag=${6:?missing immutable image tag}
 acme_email=${7:?missing ACME email}
 public_images=${8:?missing public-images flag}
-resume=${9:?missing resume flag}
-ssh_port=${10:?missing SSH port}
-admin_username=${11:?missing administrator username}
-ghcr_username=${12:?missing GitHub Container Registry username}
+telegram_mode=${9:?missing Telegram mode}
+resume=${10:?missing resume flag}
+ssh_port=${11:?missing SSH port}
+admin_username=${12:?missing administrator username}
+ghcr_username=${13:?missing GitHub Container Registry username}
 
 fresh_env=''
 work_dir=''
@@ -36,6 +42,7 @@ release_dir=''
 env_file=''
 progress_file=''
 complete_marker=''
+incoming_dir=''
 
 fail() {
   printf 'bootstrap: %s\n' "$*" >&2
@@ -51,6 +58,10 @@ cleanup() {
   if [[ -n "$work_dir" && -d "$work_dir" ]]; then
     rm -rf -- "$work_dir"
   fi
+  if [[ "$incoming_dir" =~ ^/tmp/amnezia-bootstrap-[0-9a-f]{32}$ ]]; then
+    rm -f -- "$incoming_dir/release.zip" "$incoming_dir/bootstrap-vps.sh"
+    rmdir -- "$incoming_dir" 2>/dev/null || true
+  fi
   unset MONGO_ROOT_PASSWORD MONGO_APP_PASSWORD ADMIN_PASSWORD TELEGRAM_BOT_TOKEN GHCR_PAT
 }
 trap cleanup EXIT
@@ -61,7 +72,7 @@ require_root() {
 
 validate_arguments() {
   [[ "$public_ipv4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || fail 'public IPv4 is invalid.'
-  local octet first second
+  local octet first second third
   local -a octets
   IFS='.' read -r -a octets <<< "$public_ipv4"
   for octet in "${octets[@]}"; do
@@ -69,31 +80,39 @@ validate_arguments() {
   done
   first=$((10#${octets[0]}))
   second=$((10#${octets[1]}))
+  third=$((10#${octets[2]}))
   ((first != 0 && first != 10 && first != 127 && first < 224)) || fail 'public IPv4 must be globally routable.'
   ((first != 169 || second != 254)) || fail 'public IPv4 must be globally routable.'
   ((first != 172 || second < 16 || second > 31)) || fail 'public IPv4 must be globally routable.'
+  ((first != 192 || second != 0 || (third != 0 && third != 2))) || fail 'public IPv4 must be globally routable.'
   ((first != 192 || second != 168)) || fail 'public IPv4 must be globally routable.'
   ((first != 100 || second < 64 || second > 127)) || fail 'public IPv4 must be globally routable.'
-  [[ "$public_ipv4" != 255.255.255.255 ]] || fail 'public IPv4 must be globally routable.'
+  ((first != 198 || (second != 18 && second != 19))) || fail 'public IPv4 must be globally routable.'
+  ((first != 198 || second != 51 || third != 100)) || fail 'public IPv4 must be globally routable.'
+  ((first != 203 || second != 0 || third != 113)) || fail 'public IPv4 must be globally routable.'
   [[ "$github_owner" =~ ^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$ ]] || fail 'GitHub owner must be a valid lowercase GitHub user or organization name.'
   [[ "$deploy_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fail 'deployment user is invalid.'
-  [[ "$deploy_path" =~ ^/opt/[A-Za-z0-9._/-]+$ && "$deploy_path" != *'..'* && "$deploy_path" != *'//' ]] || fail 'deployment path must be a canonical path below /opt.'
+  [[ "$deploy_path" =~ ^/opt/[A-Za-z0-9._/-]+$ && "$deploy_path" != *'..'* && "$deploy_path" != *'//'* ]] || fail 'deployment path must be a canonical path below /opt.'
   [[ "$image_tag" =~ ^sha-[0-9a-f]{40}$ ]] || fail 'image tag must be sha- followed by a 40-character lowercase commit SHA.'
   [[ "$acme_email" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || fail 'ACME email is invalid.'
   [[ "$public_images" == '0' || "$public_images" == '1' ]] || fail 'public-images flag must be 0 or 1.'
+  [[ "$telegram_mode" == 'telegram-enabled' || "$telegram_mode" == 'no-telegram' ]] || fail 'Telegram mode must be telegram-enabled or no-telegram.'
   [[ "$resume" == '0' || "$resume" == '1' ]] || fail 'resume flag must be 0 or 1.'
   [[ "$ssh_port" =~ ^[0-9]{1,5}$ ]] && ((10#$ssh_port >= 1 && 10#$ssh_port <= 65535)) || fail 'SSH port is invalid.'
   [[ "$admin_username" =~ ^[A-Za-z0-9._-]{3,64}$ ]] || fail 'administrator username is invalid.'
   [[ "$ghcr_username" =~ ^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$ ]] || fail 'GitHub Container Registry username is invalid.'
-  [[ "$release_archive" == /tmp/amnezia-bootstrap-*/release.zip && -f "$release_archive" ]] || fail 'release archive path is invalid or missing.'
+  [[ "$release_archive" =~ ^/tmp/amnezia-bootstrap-[0-9a-f]{32}/release\.zip$ ]] || fail 'release archive path is invalid.'
+  incoming_dir=${release_archive%/release.zip}
+  [[ -f "$release_archive" ]] || fail 'release archive is missing.'
 }
 
 require_printable_single_line() {
   local label=$1 value=$2
+  local LC_ALL=C
   # Bash strings cannot contain NUL at all. Reject line breaks explicitly so
   # that a decoded value can never alter the temporary Compose env-file.
   [[ "$value" != *$'\n'* && "$value" != *$'\r'* ]] || fail "$label must not contain CR or LF."
-  LC_ALL=C [[ "$value" =~ ^[[:print:]]+$ ]] || fail "$label must contain printable ASCII characters only."
+  [[ "$value" =~ ^[[:print:]]+$ ]] || fail "$label must contain printable ASCII characters only."
 }
 
 decode_record() {
@@ -119,7 +138,11 @@ read_secret_records() {
       MONGO_ROOT_PASSWORD) MONGO_ROOT_PASSWORD=$value; got_root=1 ;;
       MONGO_APP_PASSWORD) MONGO_APP_PASSWORD=$value; got_app=1 ;;
       ADMIN_PASSWORD) ADMIN_PASSWORD=$value; got_admin=1 ;;
-      TELEGRAM_BOT_TOKEN) TELEGRAM_BOT_TOKEN=$value; got_telegram=1 ;;
+      TELEGRAM_BOT_TOKEN)
+        [[ "$telegram_mode" == 'telegram-enabled' ]] || fail 'Telegram token record is forbidden when Telegram is disabled.'
+        TELEGRAM_BOT_TOKEN=$value
+        got_telegram=1
+        ;;
       GHCR_PAT) GHCR_PAT=$value; got_ghcr=1 ;;
       ACTIONS_PUBLIC_KEY) ACTIONS_PUBLIC_KEY=$value; got_actions_key=1 ;;
       *) fail 'secret input contains an unknown record name.' ;;
@@ -127,7 +150,12 @@ read_secret_records() {
     unset value
   done
 
-  ((got_root && got_app && got_admin && got_telegram && got_actions_key)) || fail 'secret input is incomplete.'
+  if [[ "$telegram_mode" == 'telegram-enabled' ]]; then
+    ((got_root && got_app && got_admin && got_telegram && got_actions_key)) || fail 'secret input is incomplete.'
+  else
+    ((got_root && got_app && got_admin && got_actions_key && ! got_telegram)) || fail 'secret input is incomplete.'
+    TELEGRAM_BOT_TOKEN=''
+  fi
   ((public_images == 1 || got_ghcr == 1)) || fail 'private GHCR images require a GHCR_PAT record.'
   [[ ${#MONGO_ROOT_PASSWORD} -ge 24 ]] || fail 'MongoDB root password must contain at least 24 characters.'
   [[ ${#MONGO_APP_PASSWORD} -ge 24 ]] || fail 'MongoDB application password must contain at least 24 characters.'
@@ -135,11 +163,14 @@ read_secret_records() {
   require_printable_single_line 'MongoDB root password' "$MONGO_ROOT_PASSWORD"
   require_printable_single_line 'MongoDB application password' "$MONGO_APP_PASSWORD"
   require_printable_single_line 'administrator password' "$ADMIN_PASSWORD"
-  require_printable_single_line 'Telegram bot token' "$TELEGRAM_BOT_TOKEN"
+  if [[ "$telegram_mode" == 'telegram-enabled' ]]; then
+    require_printable_single_line 'Telegram bot token' "$TELEGRAM_BOT_TOKEN"
+  fi
   [[ "$ACTIONS_PUBLIC_KEY" =~ ^ssh-ed25519[[:space:]][A-Za-z0-9+/=]+([[:space:]][^[:space:]]+)?$ ]] || fail 'GitHub Actions public key must be an ED25519 OpenSSH key.'
   if ((public_images == 0)); then
     require_printable_single_line 'GHCR token' "$GHCR_PAT"
-    [[ -n "$GHCR_PAT" ]] || fail 'private GHCR images require a non-empty GHCR token.'
+    [[ "$GHCR_PAT" =~ ^(ghp_[A-Za-z0-9]{36,}|[A-Fa-f0-9]{40})$ ]] || \
+      fail 'private GHCR images require a classic GitHub PAT (ghp_ token or legacy 40-character hexadecimal token).'
   fi
 }
 

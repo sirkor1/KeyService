@@ -12,6 +12,10 @@
 > в GitHub не передаются. Этот раздел ниже сохраняется как подробная
 > справка для доменного варианта, диагностики, backup и эксплуатации.
 
+> Telegram необязателен: Windows bootstrap с `-NoTelegram` сохраняет пустой
+> `TELEGRAM_BOT_TOKEN` и запускает контейнер бота без polling. Для ручного
+> варианта оставьте эту переменную пустой.
+
 ## 1. Целевая схема и сетевые границы
 
 ```
@@ -183,7 +187,11 @@ unset GHCR_TOKEN
 
 ## 6. Каталог на VPS и runtime `.env`
 
-Для первого bootstrap можно один раз клонировать репозиторий в каталог развёртывания. В дальнейшем GitHub Actions передаёт лишь compose-файлы и не требует `git pull` или сборки на VPS. Bootstrap выполняйте из того же commit, что и GHCR-тег: после clone проверьте `git rev-parse HEAD`, а в `IMAGE_TAG` используйте `sha-<этот-же-SHA>`.
+This section is a manual alternative for an operator-managed deployment. It is
+incompatible with the automated Windows bootstrap: do not clone into
+`/opt/amnezia-key-service` before running `deploy/bootstrap-production.ps1`.
+Use this procedure only when you intentionally manage the initial installation
+yourself; otherwise follow the Windows bootstrap guide linked at the top.
 
 ```bash
 sudo -iu deploy git clone --depth 1 https://github.com/<github-owner>/<repository>.git /opt/amnezia-key-service
@@ -219,6 +227,7 @@ JWT_SECRET="ВСТАВЬТЕ_СГЕНЕРИРОВАННЫЙ_JWT"
 DATA_PROTECTION_KEY="ВСТАВЬТЕ_СГЕНЕРИРОВАННЫЙ_КЛЮЧ_32_БАЙТА"
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD="ВСТАВЬТЕ_СГЕНЕРИРОВАННЫЙ_ПАРОЛЬ"
+# Telegram необязателен: оставьте пустым, чтобы контейнер bot не запускал polling.
 TELEGRAM_BOT_TOKEN="123456:ВСТАВЬТЕ_ТОКЕН_BOTFATHER"
 
 # Тег задаёт Actions/deploy.sh; эту строку в .env не добавляйте.

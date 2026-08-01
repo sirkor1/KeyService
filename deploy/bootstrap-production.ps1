@@ -8,6 +8,8 @@ the repository, the release archive, command line arguments, or local files.
 The script first verifies the server's ED25519 SSH fingerprint that was copied
 from the VPS provider.  Only then does it prompt for secrets and send them as
 base64-encoded records over the already verified SSH session's standard input.
+Secrets are necessarily held in transient process memory while they are being
+encoded; they are cleared from the script's variables as soon as SSH returns.
 
 deploy/production/bootstrap-vps.sh is the remote half of this protocol.  It
 must consume records in the form NAME=BASE64_UTF8_VALUE from stdin.  The
@@ -62,6 +64,10 @@ param(
 
     [switch] $PublicGhcr,
 
+    # Do not prompt for or configure a Telegram token. The bot container still
+    # starts, but its runtime intentionally disables Telegram polling.
+    [switch] $NoTelegram,
+
     [switch] $Resume,
 
     [switch] $ValidateOnly
@@ -92,6 +98,7 @@ function Test-PublicIpv4([string] $Address) {
     $octets = $parsed.GetAddressBytes()
     $a = [int] $octets[0]
     $b = [int] $octets[1]
+    $c = [int] $octets[2]
 
     # RFC1918, loopback, link-local, CGNAT, documentation/test, multicast and
     # other non-routable ranges are never valid public VPS addresses.
@@ -99,10 +106,11 @@ function Test-PublicIpv4([string] $Address) {
     if ($a -eq 100 -and $b -ge 64 -and $b -le 127) { return $false }
     if ($a -eq 169 -and $b -eq 254) { return $false }
     if ($a -eq 172 -and $b -ge 16 -and $b -le 31) { return $false }
-    if ($a -eq 192 -and ($b -eq 0 -or $b -eq 2 -or $b -eq 168)) { return $false }
-    if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19 -or $b -eq 51)) { return $false }
-    if ($a -eq 203 -and $b -eq 0) { return $false }
-    if ($a -ge 240) { return $false }
+    if ($a -eq 192 -and $b -eq 0 -and ($c -eq 0 -or $c -eq 2)) { return $false }
+    if ($a -eq 192 -and $b -eq 168) { return $false }
+    if ($a -eq 198 -and ($b -eq 18 -or $b -eq 19)) { return $false }
+    if ($a -eq 198 -and $b -eq 51 -and $c -eq 100) { return $false }
+    if ($a -eq 203 -and $b -eq 0 -and $c -eq 113) { return $false }
     return $true
 }
 
@@ -150,6 +158,81 @@ function ConvertTo-PosixSingleQuoted([string] $Value) {
     return $singleQuote + $Value.Replace($singleQuote, $embeddedQuote) + $singleQuote
 }
 
+function ConvertTo-WindowsCommandLineArgument([string] $Value) {
+    if ($null -eq $Value) { return '""' }
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+
+    $builder = New-Object Text.StringBuilder
+    [void] $builder.Append([char] 34)
+    $backslashCount = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq [char] 92) {
+            $backslashCount++
+            continue
+        }
+        if ($character -eq [char] 34) {
+            [void] $builder.Append([char] 92, (($backslashCount * 2) + 1))
+            [void] $builder.Append([char] 34)
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void] $builder.Append([char] 92, $backslashCount)
+            $backslashCount = 0
+        }
+        [void] $builder.Append($character)
+    }
+    if ($backslashCount -gt 0) {
+        [void] $builder.Append([char] 92, ($backslashCount * 2))
+    }
+    [void] $builder.Append([char] 34)
+    return $builder.ToString()
+}
+
+function Invoke-NativeCapture([string] $FilePath, [string[]] $ArgumentList, [int] $TimeoutMilliseconds = 0) {
+    $quotedArguments = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($argument in $ArgumentList) {
+        $quotedArguments.Add((ConvertTo-WindowsCommandLineArgument $argument))
+    }
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = [string]::Join(' ', $quotedArguments.ToArray())
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            Fail "Could not start native executable: $FilePath"
+        }
+        $process.StandardInput.Close()
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timedOut = $false
+        if ($TimeoutMilliseconds -gt 0) {
+            if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+                $timedOut = $true
+                $process.Kill()
+            }
+        }
+        $process.WaitForExit()
+        return @{
+            StdOut = $stdoutTask.GetAwaiter().GetResult()
+            StdErr = $stderrTask.GetAwaiter().GetResult()
+            ExitCode = $process.ExitCode
+            TimedOut = $timedOut
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 function Assert-NativeSuccess([string] $Program) {
     if ($LASTEXITCODE -ne 0) {
         Fail "$Program failed with exit code $LASTEXITCODE."
@@ -160,11 +243,19 @@ function Set-PrivateKeyAcl([string] $Path) {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $Path /inheritance:r | Out-Null
     Assert-NativeSuccess 'icacls'
-    & icacls.exe $Path /grant:r "${identity}:(R)" 'SYSTEM:(F)' 'Administrators:(F)' | Out-Null
+    & icacls.exe $Path /grant:r "${identity}:(R)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
     Assert-NativeSuccess 'icacls'
 }
 
-function Ensure-ActionsKey([string] $PrivateKeyPath, [string] $SshKeygen, [switch] $RequireExisting) {
+function Get-ActionsPublicKeyFromPrivate([string] $PrivateKeyPath, [string] $SshKeygen) {
+    $result = Invoke-NativeCapture $SshKeygen @('-y', '-f', $PrivateKeyPath) 5000
+    if ($result.TimedOut -or $result.ExitCode -ne 0) {
+        Fail 'ActionsKeyPath must be a readable, passphrase-free private key; encrypted keys are not supported for GitHub Actions.'
+    }
+    return $result.StdOut.Trim()
+}
+
+function Initialize-ActionsKey([string] $PrivateKeyPath, [string] $SshKeygen, [switch] $RequireExisting) {
     $keyDirectory = Split-Path -Parent $PrivateKeyPath
     if ([string]::IsNullOrWhiteSpace($keyDirectory)) {
         Fail 'ActionsKeyPath must include a directory.'
@@ -177,8 +268,10 @@ function Ensure-ActionsKey([string] $PrivateKeyPath, [string] $SshKeygen, [switc
             Fail 'Resume requires the existing GitHub Actions private key; it will not generate a replacement key.'
         }
         Write-Host 'Generating a dedicated, passphrase-free ED25519 key for the GitHub Actions deploy identity...'
-        & $SshKeygen -q -t ed25519 -a 64 -N '' -C 'amnezia-production-github-actions' -f $PrivateKeyPath
-        Assert-NativeSuccess 'ssh-keygen'
+        $generationResult = Invoke-NativeCapture $SshKeygen @('-q', '-t', 'ed25519', '-a', '64', '-N', '', '-C', 'amnezia-production-github-actions', '-f', $PrivateKeyPath) 30000
+        if ($generationResult.TimedOut -or $generationResult.ExitCode -ne 0) {
+            Fail 'Could not generate the passphrase-free GitHub Actions private key.'
+        }
     }
     Set-PrivateKeyAcl $PrivateKeyPath
 
@@ -186,24 +279,26 @@ function Ensure-ActionsKey([string] $PrivateKeyPath, [string] $SshKeygen, [switc
         if ($RequireExisting) {
             Fail 'Resume requires the existing GitHub Actions public key file; it will not derive a replacement key.'
         }
-        $publicKey = & $SshKeygen -y -f $PrivateKeyPath
-        Assert-NativeSuccess 'ssh-keygen'
-        [IO.File]::WriteAllText($publicKeyPath, (($publicKey -join "`n").Trim() + "`n"), [Text.Encoding]::ASCII)
+        $publicKey = Get-ActionsPublicKeyFromPrivate $PrivateKeyPath $SshKeygen
+        [IO.File]::WriteAllText($publicKeyPath, ($publicKey + "`n"), [Text.Encoding]::ASCII)
     }
     $publicKeyText = [IO.File]::ReadAllText($publicKeyPath, [Text.Encoding]::ASCII).Trim()
     if ($publicKeyText -notmatch '^ssh-ed25519\s+[A-Za-z0-9+/]+={0,2}(\s+.*)?$') {
         Fail 'Actions public key is not a valid SSH ED25519 public key.'
     }
 
-    $derivedPublicKey = ((& $SshKeygen -y -f $PrivateKeyPath) -join "`n").Trim()
-    Assert-NativeSuccess 'ssh-keygen'
+    $derivedPublicKey = Get-ActionsPublicKeyFromPrivate $PrivateKeyPath $SshKeygen
     $derivedParts = $derivedPublicKey -split '\s+', 3
     $storedParts = $publicKeyText -split '\s+', 3
     if ($derivedParts.Count -lt 2 -or $storedParts.Count -lt 2 -or
         $derivedParts[0] -cne $storedParts[0] -or $derivedParts[1] -cne $storedParts[1]) {
         Fail 'Actions public key does not match its private key.'
     }
-    return @{ Private = $PrivateKeyPath; Public = $publicKeyPath; PublicText = $publicKeyText }
+    $fingerprintResult = Invoke-NativeCapture $SshKeygen @('-lf', $publicKeyPath, '-E', 'sha256')
+    if ($fingerprintResult.ExitCode -ne 0 -or $fingerprintResult.StdOut -notmatch '\b(SHA256:[A-Za-z0-9+/]{43})\b') {
+        Fail 'Could not read the GitHub Actions public-key fingerprint.'
+    }
+    return @{ Private = $PrivateKeyPath; Public = $publicKeyPath; PublicText = $publicKeyText; Fingerprint = $Matches[1] }
 }
 
 function Get-ManifestFiles([string] $RepositoryRoot, [string] $ManifestPath, [string] $Git) {
@@ -228,8 +323,8 @@ function Get-ManifestFiles([string] $RepositoryRoot, [string] $ManifestPath, [st
         # Images are tagged with HEAD. Every uploaded release descriptor (the
         # root bootstrap helper included) must be a tracked, clean version of
         # that same commit rather than an accidental local edit.
-        $null = & $Git -C $RepositoryRoot ls-files --error-unmatch -- $entry 2>$null
-        if ($LASTEXITCODE -ne 0) {
+        $trackedResult = Invoke-NativeCapture $Git @('-C', $RepositoryRoot, 'ls-files', '--error-unmatch', '--', $entry)
+        if ($trackedResult.ExitCode -ne 0) {
             Fail "Manifest file is not tracked by Git: $entry"
         }
         $null = & $Git -C $RepositoryRoot diff --quiet --no-ext-diff HEAD -- $entry
@@ -243,6 +338,32 @@ function Get-ManifestFiles([string] $RepositoryRoot, [string] $ManifestPath, [st
     }
     if ($files.Count -eq 0) { Fail 'Bootstrap manifest has no files.' }
     return $files
+}
+
+function Assert-ManifestMatchesRemoteArchiveValidator([object[]] $ManifestFiles) {
+    $helper = @($ManifestFiles | Where-Object { $_.Relative -eq 'deploy/production/bootstrap-vps.sh' })
+    if ($helper.Count -ne 1) {
+        Fail 'The bootstrap manifest must contain exactly one remote bootstrap helper.'
+    }
+    $helperText = [IO.File]::ReadAllText($helper[0].Source, [Text.Encoding]::UTF8)
+    $arrayMatch = [regex]::Match($helperText, '(?ms)^\s*local -a expected_files=\(\s*(.*?)^\s*\)')
+    if (-not $arrayMatch.Success) {
+        Fail 'Could not read expected_files from the remote bootstrap helper.'
+    }
+    $expectedFiles = @([regex]::Matches($arrayMatch.Groups[1].Value, "(?m)^\s*'([^']+)'\s*$") | ForEach-Object { $_.Groups[1].Value })
+    if ($expectedFiles.Count -eq 0) {
+        Fail 'The remote bootstrap helper has no expected release files.'
+    }
+    $manifestReleaseFiles = @($ManifestFiles | Where-Object { $_.Relative -ne 'deploy/production/bootstrap-vps.sh' } | ForEach-Object { $_.Relative })
+    $manifestSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $remoteSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($file in $manifestReleaseFiles) { [void] $manifestSet.Add($file) }
+    foreach ($file in $expectedFiles) { [void] $remoteSet.Add($file) }
+    if (-not $manifestSet.SetEquals($remoteSet) -or $manifestReleaseFiles.Count -ne $expectedFiles.Count) {
+        $onlyManifest = @($manifestReleaseFiles | Where-Object { -not $remoteSet.Contains($_) }) -join ', '
+        $onlyRemote = @($expectedFiles | Where-Object { -not $manifestSet.Contains($_) }) -join ', '
+        Fail "Bootstrap manifest and remote expected_files differ. Manifest only: [$onlyManifest]. Remote only: [$onlyRemote]."
+    }
 }
 
 function New-BootstrapReleaseArchive([object[]] $Files) {
@@ -328,13 +449,15 @@ if ($ImageTag -cne "sha-$gitHead") {
 
 $manifestPath = Join-Path $PSScriptRoot 'production/bootstrap-manifest.txt'
 $manifestFiles = Get-ManifestFiles $repositoryRoot $manifestPath $git
+Assert-ManifestMatchesRemoteArchiveValidator $manifestFiles
 if (-not $ActionsKeyPath) {
     $ActionsKeyPath = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AmneziaKeyService\keys\production-actions-ed25519'
 }
-$actionsKey = Ensure-ActionsKey ([IO.Path]::GetFullPath($ActionsKeyPath)) $sshKeygen -RequireExisting:$Resume
+$actionsKey = Initialize-ActionsKey ([IO.Path]::GetFullPath($ActionsKeyPath)) $sshKeygen -RequireExisting:$Resume
 
 Write-Host "Validated local release $ImageTag and $($manifestFiles.Count) explicit non-secret bootstrap files."
 Write-Host "GitHub Actions deploy public key: $($actionsKey.Public)"
+Write-Host "GitHub Actions deploy public-key fingerprint: $($actionsKey.Fingerprint)"
 
 if ($ValidateOnly) {
     Write-Host 'ValidateOnly completed: no network operation and no secret prompt was performed.'
@@ -351,14 +474,24 @@ if ($ValidateOnly) {
 
 $temporaryRoot = $null
 $packageRoot = $null
+$payloadLines = $null
+$mongoRootPassword = $null
+$mongoAppPassword = $null
+$adminPassword = $null
+$telegramToken = $null
+$ghcrPat = $null
 try {
     $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("amnezia-production-ssh-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
     $knownHosts = Join-Path $temporaryRoot 'known_hosts'
 
     Write-Host "Fetching the ED25519 host key from $HostAddress`:$SshPort for fingerprint verification..."
-    & $sshKeyscan -T 10 -t ed25519 -p $SshPort -H $HostAddress 2>$null | Set-Content -LiteralPath $knownHosts -Encoding ascii
-    Assert-NativeSuccess 'ssh-keyscan'
+    $keyscanResult = Invoke-NativeCapture $sshKeyscan @('-T', '10', '-t', 'ed25519', '-p', "$SshPort", '-H', $HostAddress)
+    if ($keyscanResult.ExitCode -ne 0) {
+        $detail = $keyscanResult.StdErr.Trim()
+        Fail "ssh-keyscan failed with exit code $($keyscanResult.ExitCode): $detail"
+    }
+    [IO.File]::WriteAllText($knownHosts, $keyscanResult.StdOut, [Text.Encoding]::ASCII)
     if (-not (Test-Path -LiteralPath $knownHosts) -or (Get-Item -LiteralPath $knownHosts).Length -eq 0) {
         Fail 'ssh-keyscan returned no ED25519 host key.'
     }
@@ -373,15 +506,19 @@ try {
     }
     Write-Host 'SSH ED25519 host fingerprint verified.'
 
-    $sshOptions = @('-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$knownHosts", '-p', "$SshPort")
-    $scpOptions = @('-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$knownHosts", '-P', "$SshPort")
+    $sshOptions = @('-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$knownHosts", '-p', "$SshPort")
+    $scpOptions = @('-o', 'StrictHostKeyChecking=yes', '-o', "UserKnownHostsFile=$knownHosts", '-P', "$SshPort")
     if ($RootSshIdentityPath) {
-        $sshOptions += @('-i', $RootSshIdentityPath)
-        $scpOptions += @('-i', $RootSshIdentityPath)
+        $sshOptions += @('-i', $RootSshIdentityPath, '-o', 'IdentitiesOnly=yes')
+        $scpOptions += @('-i', $RootSshIdentityPath, '-o', 'IdentitiesOnly=yes')
     }
     $remote = "$RootUser@$HostAddress"
-    $remoteIncoming = "/tmp/amnezia-bootstrap-$($ImageTag.Substring(4))"
-    & $ssh @sshOptions $remote "umask 077; mkdir -p '$remoteIncoming'"
+    Write-Host 'Verifying root SSH authentication before preparing the release...'
+    & $ssh @sshOptions $remote 'true'
+    Assert-NativeSuccess 'ssh'
+
+    $remoteIncoming = "/tmp/amnezia-bootstrap-$([Guid]::NewGuid().ToString('N'))"
+    & $ssh @sshOptions $remote "umask 077; mkdir '$remoteIncoming'"
     Assert-NativeSuccess 'ssh'
 
     $package = New-BootstrapReleaseArchive $manifestFiles
@@ -401,33 +538,52 @@ try {
         Fail 'MongoDB root and application passwords must be different.'
     }
     $adminPassword = Read-ConfirmedSecret 'Panel administrator password' 12
-    $telegramToken = Read-ConfirmedSecret 'Telegram bot token' 20
-    if ($telegramToken -notmatch '^[0-9]{5,}:[A-Za-z0-9_-]{10,}$') {
-        Fail 'Telegram bot token has an unexpected format.'
+    if (-not $NoTelegram) {
+        $telegramToken = Read-ConfirmedSecret 'Telegram bot token' 20
+        if ($telegramToken -notmatch '^[0-9]{5,}:[A-Za-z0-9_-]{10,}$') {
+            Fail 'Telegram bot token has an unexpected format.'
+        }
     }
 
     $payloadLines.Add("MONGO_ROOT_PASSWORD=$(ConvertTo-Base64Utf8 $mongoRootPassword)")
     $payloadLines.Add("MONGO_APP_PASSWORD=$(ConvertTo-Base64Utf8 $mongoAppPassword)")
     $payloadLines.Add("ADMIN_PASSWORD=$(ConvertTo-Base64Utf8 $adminPassword)")
-    $payloadLines.Add("TELEGRAM_BOT_TOKEN=$(ConvertTo-Base64Utf8 $telegramToken)")
+    if (-not $NoTelegram) {
+        $payloadLines.Add("TELEGRAM_BOT_TOKEN=$(ConvertTo-Base64Utf8 $telegramToken)")
+    }
     # This key is public, but the remote script intentionally receives it via
     # the same base64 line parser as the sensitive values.
     $payloadLines.Add("ACTIONS_PUBLIC_KEY=$(ConvertTo-Base64Utf8 $actionsKey.PublicText)")
     if (-not $PublicGhcr) {
-        $ghcrPat = Read-ConfirmedSecret 'GitHub Container Registry PAT (read:packages)' 1
+        $ghcrPat = Read-ConfirmedSecret 'GitHub Container Registry classic PAT (read:packages)' 40
+        if ($ghcrPat -notmatch '^(?:ghp_[A-Za-z0-9]{36,}|[A-Fa-f0-9]{40})$') {
+            Fail 'GHCR PAT must be a classic GitHub token: ghp_ followed by at least 36 alphanumeric characters, or a legacy 40-character hexadecimal token.'
+        }
         $payloadLines.Add("GHCR_PAT=$(ConvertTo-Base64Utf8 $ghcrPat)")
     }
 
     $publicImagesFlag = if ($PublicGhcr) { '1' } else { '0' }
+    $telegramMode = if ($NoTelegram) { 'no-telegram' } else { 'telegram-enabled' }
     $resumeFlag = if ($Resume) { '1' } else { '0' }
     $quotedHelper = ConvertTo-PosixSingleQuoted "$remoteIncoming/bootstrap-vps.sh"
     $quotedArchive = ConvertTo-PosixSingleQuoted "$remoteIncoming/release.zip"
-    $remoteCommand = "set -Eeuo pipefail; umask 077; chmod 700 $quotedHelper; exec bash $quotedHelper $quotedArchive $(ConvertTo-PosixSingleQuoted $HostAddress) $(ConvertTo-PosixSingleQuoted $GitHubOwner) $(ConvertTo-PosixSingleQuoted $DeployUser) $(ConvertTo-PosixSingleQuoted $DeployPath) $(ConvertTo-PosixSingleQuoted $ImageTag) $(ConvertTo-PosixSingleQuoted $AcmeEmail) $publicImagesFlag $resumeFlag $SshPort $(ConvertTo-PosixSingleQuoted $AdminUsername) $(ConvertTo-PosixSingleQuoted $GhcrUsername)"
+    $remoteCommand = "set -Eeuo pipefail; umask 077; chmod 700 $quotedHelper; exec bash $quotedHelper $quotedArchive $(ConvertTo-PosixSingleQuoted $HostAddress) $(ConvertTo-PosixSingleQuoted $GitHubOwner) $(ConvertTo-PosixSingleQuoted $DeployUser) $(ConvertTo-PosixSingleQuoted $DeployPath) $(ConvertTo-PosixSingleQuoted $ImageTag) $(ConvertTo-PosixSingleQuoted $AcmeEmail) $publicImagesFlag $telegramMode $resumeFlag $SshPort $(ConvertTo-PosixSingleQuoted $AdminUsername) $(ConvertTo-PosixSingleQuoted $GhcrUsername)"
 
-    # Do not put payloadLines in a file, process arguments, environment variable,
-    # transcript, exception, or output.  SSH receives it only through stdin.
-    $payloadLines | & $ssh @sshOptions $remote $remoteCommand
-    Assert-NativeSuccess 'ssh bootstrap'
+    # Do not put payload lines in a file, process arguments, environment variable,
+    # transcript, exception, or output. SSH receives them only through stdin.
+    try {
+        $payloadLines | & $ssh @sshOptions $remote $remoteCommand
+        Assert-NativeSuccess 'ssh bootstrap'
+    }
+    finally {
+        if ($null -ne $payloadLines) { $payloadLines.Clear() }
+        $payloadLines = $null
+        $mongoRootPassword = $null
+        $mongoAppPassword = $null
+        $adminPassword = $null
+        $telegramToken = $null
+        $ghcrPat = $null
+    }
 
     # The VPS has just installed this exact public key with no-pty and
     # no-forwarding restrictions. Verify that GitHub Actions will be able to
@@ -450,6 +606,13 @@ try {
     Write-Host '  PRODUCTION_PROXY_MODE (variable): nginx'
 }
 finally {
+    if ($null -ne $payloadLines) { $payloadLines.Clear() }
+    $payloadLines = $null
+    $mongoRootPassword = $null
+    $mongoAppPassword = $null
+    $adminPassword = $null
+    $telegramToken = $null
+    $ghcrPat = $null
     if ($packageRoot -and (Test-Path -LiteralPath $packageRoot)) {
         Remove-Item -LiteralPath $packageRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
