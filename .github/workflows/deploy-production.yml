@@ -45,7 +45,7 @@ jobs:
       IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
       - name: Checkout the deployed revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ inputs.source_ref }}
 

@@ -37,7 +37,7 @@ jobs:
       image_prefix: ${{ steps.revision.outputs.image_prefix }}
     steps:
       - name: Checkout exact source revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
 
@@ -73,7 +73,7 @@ jobs:
             build-args: ''
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.prepare.outputs.sha }}
 
