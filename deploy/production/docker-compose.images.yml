@@ -1,0 +1,19 @@
+# Production image override. It intentionally leaves `build` in the base
+# compose file untouched; deploy.sh always uses `--no-build`, so a VPS never
+# needs source code or a compiler to deploy a release.
+#
+# Set GHCR_IMAGE_PREFIX in the VPS .env, for example:
+# GHCR_IMAGE_PREFIX=ghcr.io/example-org/amnezia-key-service
+# `IMAGE_TAG` is passed by GitHub Actions and must be an immutable sha- tag.
+services:
+  web:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in .env}/web:${IMAGE_TAG:?Set IMAGE_TAG to an immutable GHCR tag}
+
+  api:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in .env}/api:${IMAGE_TAG:?Set IMAGE_TAG to an immutable GHCR tag}
+
+  worker:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in .env}/worker:${IMAGE_TAG:?Set IMAGE_TAG to an immutable GHCR tag}
+
+  bot:
+    image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX in .env}/bot:${IMAGE_TAG:?Set IMAGE_TAG to an immutable GHCR tag}

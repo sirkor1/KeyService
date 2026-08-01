@@ -1,0 +1,111 @@
+name: Publish container images
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit SHA or branch to build (normally main)
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-ghcr-${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    name: Resolve source revision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+      image_prefix: ${{ steps.revision.outputs.image_prefix }}
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.source_ref }}
+
+      - name: Resolve immutable source revision and image prefix
+        id: revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "image_prefix=${REGISTRY}/${owner}/amnezia-key-service" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: prepare
+    name: Publish ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Api
+          - service: worker
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Worker
+          - service: bot
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Bot
+          - service: web
+            file: web/admin/Dockerfile
+            build-args: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          tags: |
+            ${{ needs.prepare.outputs.image_prefix }}/${{ matrix.service }}:sha-${{ needs.prepare.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+          cache-from: type=gha,scope=publish-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=publish-${{ matrix.service }}
+
+  deploy-production:
+    needs: [prepare, publish]
+    uses: ./.github/workflows/deploy-production.yml
+    with:
+      image_tag: sha-${{ needs.prepare.outputs.sha }}
+      source_ref: ${{ needs.prepare.outputs.sha }}
+    secrets: inherit

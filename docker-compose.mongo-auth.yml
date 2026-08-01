@@ -1,0 +1,29 @@
+# Explicit production opt-in for MongoDB authentication.
+#
+# This file intentionally has no defaults for credentials or the application
+# URI. Compose stops before changing any container when it is absent. Use it
+# only after completing the fresh-install bootstrap or existing-volume procedure
+# in DEPLOYMENT.md:
+#   docker compose -f docker-compose.yml -f docker-compose.mongo-auth.yml up -d --build
+
+services:
+  api:
+    environment:
+      MongoDb__ConnectionString: ${MONGODB_CONNECTION_STRING:?Set an encoded MongoDB application URI before enabling authentication.}
+
+  worker:
+    environment:
+      MongoDb__ConnectionString: ${MONGODB_CONNECTION_STRING:?Set an encoded MongoDB application URI before enabling authentication.}
+
+  bot:
+    environment:
+      MongoDb__ConnectionString: ${MONGODB_CONNECTION_STRING:?Set an encoded MongoDB application URI before enabling authentication.}
+
+  mongo:
+    command: ["mongod", "--auth", "--bind_ip_all"]
+    environment:
+      # The healthcheck authenticates as the least-privileged credential the
+      # applications use. No root secret remains in the steady-state container.
+      MONGODB_CONNECTION_STRING: ${MONGODB_CONNECTION_STRING:?Set an encoded MongoDB application URI before enabling authentication.}
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet \"$$MONGODB_CONNECTION_STRING\" --eval \"quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)\""]

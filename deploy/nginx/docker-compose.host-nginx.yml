@@ -1,0 +1,25 @@
+# Production override for a host-installed Nginx.
+#
+# Requires Docker Compose v2.24.4+ for the !override tag. It makes the web
+# container reachable only from the VPS itself and removes the direct API
+# listener.  The host Nginx configuration in amnezia.conf.example is then the
+# only public HTTP(S) entry point.
+#
+# Run together with the base compose file, for example:
+# docker compose -f docker-compose.yml -f deploy/nginx/docker-compose.host-nginx.yml up -d --build
+
+services:
+  web:
+    ports: !override
+      - "127.0.0.1:8081:80"
+
+  api:
+    # Nginx routes /api directly so ASP.NET receives X-Forwarded-Proto=https
+    # from the TLS terminator. It is still not reachable from the network.
+    # Enabling forwarded headers trusts the proxy network; it is safe here only
+    # because the API listener is bound to loopback and host Nginx is its sole
+    # HTTP caller. Do not reuse this setting with a public API port.
+    environment:
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    ports: !override
+      - "127.0.0.1:8080:8080"

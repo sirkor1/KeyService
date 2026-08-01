@@ -1,0 +1,149 @@
+services:
+  # Админ-панель. Порт 8081, а не 80: по DEPLOYMENT.md на хосте уже слушает
+  # nginx с сертификатами, и занимать 80 контейнером нельзя. Хостовой nginx
+  # проксирует сюда — см. раздел о панели в DEPLOYMENT.md.
+  web:
+    build:
+      context: .
+      dockerfile: web/admin/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - api
+
+  # HTTP-часть: панель, авторизация, /api/vpn/*.
+  #
+  # Схему не мигрирует — ждёт worker (см. MongoSchemaGate). Поэтому при
+  # неподнявшемся worker панель тоже не поднимется: обмен на отсутствие
+  # гонки трёх раннеров миграций на одной базе.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT: AmneziaKeyService.Api
+    restart: unless-stopped
+    # Порт остаётся опубликованным: на него смотрит хостовой nginx из
+    # текущего развёртывания и Swagger в разработке.
+    ports:
+      - "8080:8080"
+    environment:
+      # Local development keeps the unauthenticated default. Production auth is
+      # an explicit opt-in in docker-compose.mongo-auth.yml and requires this URI.
+      - MongoDb__ConnectionString=${MONGODB_CONNECTION_STRING:-mongodb://mongo:27017}
+      - MongoDb__DatabaseName=amnezia_vpn
+      - MongoDb__UsersCollection=users
+      - MongoDb__ClientsCollection=clients
+      - MongoDb__ServerConfigCollection=server_config
+      - MongoDb__PassCodesCollection=passcodes
+      - Jwt__Secret=${JWT_SECRET}
+      - Jwt__Issuer=AmneziaKeyService
+      - Jwt__Audience=AmneziaKeyService
+      - Jwt__ExpiryMinutes=1440
+      # Шифрование SSH-паролей и приватных ключей в MongoDB. Нужен здесь,
+      # пока установка и выдача ключа идут в этом процессе.
+      - Security__DataProtectionKey=${DATA_PROTECTION_KEY}
+      - Seq__ServerUrl=http://seq:5341
+      - Seq__ApiKey=${SEQ_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # Фоновая часть: миграции схемы, сидирование владельца и четыре воркера
+  # эксплуатации. Портов не открывает — наружу смотрит только логами.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT: AmneziaKeyService.Worker
+    restart: unless-stopped
+    environment:
+      - MongoDb__ConnectionString=${MONGODB_CONNECTION_STRING:-mongodb://mongo:27017}
+      - MongoDb__DatabaseName=amnezia_vpn
+      - MongoDb__UsersCollection=users
+      - MongoDb__ClientsCollection=clients
+      - MongoDb__ServerConfigCollection=server_config
+      - MongoDb__PassCodesCollection=passcodes
+      - Security__DataProtectionKey=${DATA_PROTECTION_KEY}
+      # Владелец панели создаётся здесь: это операция над данными,
+      # как и миграции. Пароль в api больше не нужен.
+      - Admin__Username=${ADMIN_USERNAME}
+      - Admin__Password=${ADMIN_PASSWORD}
+      - Seq__ServerUrl=http://seq:5341
+      - Seq__ApiKey=${SEQ_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # Telegram-бот. Токен есть только здесь.
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROJECT: AmneziaKeyService.Bot
+    restart: unless-stopped
+    environment:
+      - MongoDb__ConnectionString=${MONGODB_CONNECTION_STRING:-mongodb://mongo:27017}
+      - MongoDb__DatabaseName=amnezia_vpn
+      - MongoDb__UsersCollection=users
+      - MongoDb__ClientsCollection=clients
+      - MongoDb__ServerConfigCollection=server_config
+      - MongoDb__PassCodesCollection=passcodes
+      # Пока бот заводит peer сам, ему нужен ключ шифрования SSH-кредов.
+      # Уйдёт вместе с переносом выдачи на доменные события.
+      - Security__DataProtectionKey=${DATA_PROTECTION_KEY}
+      - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
+      - Seq__ServerUrl=http://seq:5341
+      - Seq__ApiKey=${SEQ_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    # Authentication is deliberately not enabled here: existing local volumes
+    # must be bootstrapped and verified before mongod receives --auth. See
+    # docker-compose.mongo-auth.yml and DEPLOYMENT.md for the two safe paths.
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Сбор логов. Интерфейс намеренно привязан к 127.0.0.1: у Seq нет пароля
+  # до первой настройки, а внутри лежит эксплуатационная история сервиса,
+  # который ворочает VPN-ключами. Наружу — только через SSH-туннель
+  # (ssh -L 8082:127.0.0.1:8082 user@host) либо через хостовой nginx
+  # с basic-auth. Порт приёма 5341 не публикуется вовсе: в него ходит
+  # только api по внутренней сети compose.
+  seq:
+    image: datalust/seq:2024
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      # Хэш пароля администратора: `docker run --rm datalust/seq config hash`.
+      # Пустое значение оставляет первый вход без пароля — задавайте.
+      - SEQ_FIRSTRUN_ADMINPASSWORDHASH=${SEQ_ADMIN_PASSWORD_HASH}
+      # Потолок кеша. Без него Seq разрастается по доступной памяти,
+      # а живёт он на той же машине, что и MongoDB.
+      - SEQ_CACHE_SYSTEMRAMTARGET=0.2
+    ports:
+      - "127.0.0.1:8082:80"
+    volumes:
+      - seq_data:/data
+
+volumes:
+  mongo_data:
+  seq_data:

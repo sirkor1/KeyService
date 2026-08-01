@@ -1,0 +1,132 @@
+/* ── Полоса загрузки ────────────────────────────────────────────────────── */
+
+.loadWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.loadTrack {
+  inline-size: var(--panel-bar-w);
+  block-size: var(--panel-bar-h);
+  background: var(--color-neutral-300);
+  flex: none;
+}
+
+.loadFill {
+  display: block;
+  block-size: 100%;
+  background: var(--color-text);
+}
+
+.loadFillHigh {
+  background: var(--color-accent);
+}
+
+.loadValue {
+  font-size: var(--panel-small-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash {
+  color: var(--color-neutral-600);
+}
+
+/* ── Двухстрочная ячейка ────────────────────────────────────────────────── */
+
+.stacked {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.stackedPrimary {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackedSecondary {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Секреты ────────────────────────────────────────────────────────────── */
+
+.masked {
+  color: var(--color-neutral-600);
+  font-size: var(--panel-meta-size);
+}
+
+/* ── Пустое состояние и ошибки ──────────────────────────────────────────── */
+
+.empty {
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-item-size);
+}
+
+.emptyHint {
+  margin: var(--space-2) auto 0;
+  max-width: 420px;
+  font-size: var(--panel-meta-size);
+  color: var(--color-neutral-600);
+}
+
+.error {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: var(--panel-hairline) solid var(--color-accent);
+  color: var(--color-accent-700);
+  font-size: var(--panel-body-size);
+}
+
+/* ── Секции и определения ───────────────────────────────────────────────── */
+
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.sectionHeading {
+  margin: 0;
+  margin-right: auto;
+}
+
+.defRow {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--panel-hairline) solid var(--color-divider);
+  font-size: var(--panel-body-size);
+}
+
+.defLabel {
+  min-width: 150px;
+  flex: none;
+  color: var(--color-neutral-600);
+}
+
+.defValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ── Догрузка ───────────────────────────────────────────────────────────── */
+
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0;
+}

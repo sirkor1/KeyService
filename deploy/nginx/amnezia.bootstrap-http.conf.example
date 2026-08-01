@@ -1,0 +1,77 @@
+# Temporary HTTP-only Nginx site for the first Let's Encrypt certificate.
+#
+# 1. Replace panel.example.com.
+# 2. Enable this file and run `nginx -t && systemctl reload nginx`.
+# 3. Run:
+#      sudo mkdir -p /var/www/certbot
+#      sudo certbot certonly --webroot -w /var/www/certbot -d panel.example.com
+# 4. Replace this site with amnezia.conf.example and reload Nginx.
+#
+# Do not leave this site enabled after the certificate is issued: it provides
+# HTTP only and has no HSTS or TLS protection.
+
+upstream amnezia_panel {
+    server 127.0.0.1:8081;
+    keepalive 16;
+}
+
+upstream amnezia_api {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name panel.example.com;
+
+    client_max_body_size 64k;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        proxy_pass http://amnezia_panel;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 80;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /api/jobs/ {
+        proxy_pass http://amnezia_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 80;
+        proxy_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://amnezia_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto http;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 80;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}

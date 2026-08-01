@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\AmneziaKeyService.Core\AmneziaKeyService.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Скрипты и шаблоны из amnezia-client. Именно EmbeddedResource, а не Content:
+      файлы версионируются вместе со сборкой, не требуют COPY в Dockerfile
+      и не могут доехать до продакшна частично. См. ServerScripts/UPSTREAM.md.
+
+      Маска берёт каталог целиком, а не перечисляет расширения. Прежние
+      маски *.conf и *.json покрывали только клиентские шаблоны, а скрипты
+      установки и Dockerfile-ы, появившиеся позже, в сборку не попадали —
+      установка падала на первом же чтении ScriptRegistry. Список расширений
+      здесь обязан расходиться с содержимым каталога, поэтому его нет.
+    -->
+    <EmbeddedResource Include="ServerScripts\**\*" Exclude="ServerScripts\**\*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <!-- IHostedService для раннера миграций и сидирования владельца -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.5" />
+    <!--
+      Композиция и логирование живут здесь, а не в каждом хосте: процессов
+      теперь три (api, worker, bot), и три копии одной регистрации разошлись бы
+      на первой же правке. См. DependencyInjection/ и Logging/.
+    -->
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.5" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
+    <PackageReference Include="MongoDB.Driver" Version="3.10.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.Seq" Version="9.1.0" />
+    <PackageReference Include="SSH.NET" Version="2025.1.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.17.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

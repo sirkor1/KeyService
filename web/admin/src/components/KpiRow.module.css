@@ -1,0 +1,52 @@
+.row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-bottom: var(--panel-rule) solid var(--color-divider);
+}
+
+.cell {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  min-width: 0;
+}
+
+/* Линейка слева у всех, кроме первой: сетка должна читаться. */
+.cell + .cell {
+  border-left: var(--panel-rule) solid var(--color-divider);
+}
+
+.label {
+  font-size: var(--panel-micro-size);
+  letter-spacing: var(--panel-label-tracking);
+  text-transform: uppercase;
+  color: var(--color-neutral-600);
+  margin-bottom: var(--space-2);
+}
+
+.value {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-kpi-size);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.valueCompact {
+  font-size: var(--panel-kpi-size-sm);
+}
+
+.accent {
+  color: var(--color-accent-700);
+}
+
+@media (max-width: 900px) {
+  .row {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+  }
+
+  .cell + .cell {
+    border-left: 0;
+    border-top: var(--panel-hairline) solid var(--color-divider);
+  }
+}

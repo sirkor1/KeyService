@@ -1,0 +1,152 @@
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+  gap: var(--space-8);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 560px;
+}
+
+.narrow {
+  composes: input from global;
+  max-width: 160px;
+}
+
+.hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* ── Список серверов ────────────────────────────────────────────────────── */
+
+/* Сетка в зазор на цвете линейки: рамки рисует фон, а не border у строк. */
+.serverList {
+  display: grid;
+  gap: var(--panel-hairline);
+  background: var(--color-divider);
+  border: var(--panel-hairline) solid var(--color-divider);
+}
+
+.serverRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  cursor: pointer;
+}
+
+.serverRow:hover {
+  background: var(--panel-hover-bg);
+}
+
+.serverRowActive {
+  background: var(--panel-selected-bg);
+}
+
+/* Радиокнопку прячем: роль выделения играет подложка строки. */
+.serverRow input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.serverRow:focus-within {
+  outline: var(--panel-rule) solid var(--color-accent);
+  outline-offset: calc(-1 * var(--panel-rule));
+}
+
+.serverInfo {
+  display: flex;
+  flex-direction: column;
+  margin-right: auto;
+  min-width: 0;
+}
+
+.serverName {
+  font-size: var(--panel-body-size);
+  font-weight: 600;
+}
+
+.serverMeta {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+.serverStats {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  white-space: nowrap;
+}
+
+/* ── Предпросмотр ───────────────────────────────────────────────────────── */
+
+.preview {
+  min-width: 0;
+}
+
+.previewCard {
+  border: var(--panel-hairline) solid var(--color-divider);
+  padding: var(--space-3);
+}
+
+.previewHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--panel-hairline) solid var(--color-divider);
+}
+
+.previewHead > span:first-child {
+  margin-right: auto;
+}
+
+.previewRow {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: var(--panel-hairline) solid var(--color-divider);
+  font-size: var(--panel-meta-size);
+}
+
+.previewLabel {
+  min-width: 120px;
+  flex: none;
+  color: var(--color-neutral-600);
+}
+
+.previewValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.previewActions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.note {
+  margin: var(--space-3) 0 0;
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+@media (max-width: 1000px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

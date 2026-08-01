@@ -1,0 +1,78 @@
+# Production override: Traefik terminates TLS and obtains/renews ACME
+# certificates itself.  Do not combine it with the host-Nginx override: both
+# variants own TCP ports 80 and 443.
+#
+# Required .env values on the VPS:
+#   PANEL_DOMAIN=panel.example.com
+#   ACME_EMAIL=ops@example.com
+#
+# Requires Docker Compose v2.24.4+ for !reset.  Start with:
+# docker compose -f docker-compose.yml -f deploy/traefik/docker-compose.traefik.yml up -d --build
+
+services:
+  # Remove development listeners.  Traefik is the only public entry point and
+  # reaches the web container through the private Compose network.
+  web:
+    ports: !reset []
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.amnezia.rule=Host(`${PANEL_DOMAIN:?Set PANEL_DOMAIN in .env}`)"
+      - "traefik.http.routers.amnezia.entrypoints=websecure"
+      - "traefik.http.routers.amnezia.tls=true"
+      - "traefik.http.routers.amnezia.tls.certresolver=letsencrypt"
+      - "traefik.http.services.amnezia.loadbalancer.server.port=80"
+      - "traefik.http.routers.amnezia.middlewares=amnezia-security@docker,amnezia-body@docker"
+      - "traefik.http.middlewares.amnezia-security.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.amnezia-security.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.amnezia-security.headers.frameDeny=true"
+      - "traefik.http.middlewares.amnezia-security.headers.referrerPolicy=same-origin"
+      - "traefik.http.middlewares.amnezia-security.headers.permissionsPolicy=camera=(), geolocation=(), microphone=()"
+      - "traefik.http.middlewares.amnezia-body.buffering.maxRequestBodyBytes=65536"
+      - "traefik.http.middlewares.amnezia-body.buffering.memRequestBodyBytes=65536"
+
+  api:
+    ports: !reset []
+    # ASP.NET otherwise trusts only loopback forwarded headers. This enables
+    # proxy-network headers because Traefik is the only caller: the API has no
+    # published port in this overlay. Do not add a public API port with it set.
+    environment:
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.amnezia-api.rule=Host(`${PANEL_DOMAIN:?Set PANEL_DOMAIN in .env}`) && PathPrefix(`/api/`)"
+      - "traefik.http.routers.amnezia-api.priority=100"
+      - "traefik.http.routers.amnezia-api.entrypoints=websecure"
+      - "traefik.http.routers.amnezia-api.tls=true"
+      - "traefik.http.routers.amnezia-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.amnezia-api.middlewares=amnezia-security@docker,amnezia-body@docker"
+      - "traefik.http.services.amnezia-api.loadbalancer.server.port=8080"
+
+  traefik:
+    image: traefik:v3.7.5
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.transport.respondingtimeouts.readtimeout=300s"
+      - "--entrypoints.websecure.transport.respondingtimeouts.writetimeout=600s"
+      - "--entrypoints.websecure.transport.respondingtimeouts.idletimeout=180s"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Set ACME_EMAIL in .env}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--api.dashboard=false"
+      - "--accesslog=true"
+      - "--log.level=INFO"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Docker socket is read-only; Traefik still needs it to discover labels.
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik_letsencrypt:/letsencrypt"
+
+volumes:
+  traefik_letsencrypt:

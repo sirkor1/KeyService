@@ -1,0 +1,5 @@
+.dialogForm { display: flex; flex-direction: column; gap: var(--space-4); min-inline-size: min(100%, 28rem); }
+.hint { margin: var(--space-1) 0 0; color: var(--color-neutral-600); font-size: var(--panel-small-size); }
+.password { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); padding-top: var(--space-3); border-top: var(--panel-hairline) solid var(--color-divider); }
+.operations { display: flex; flex-wrap: wrap; gap: var(--space-2); padding-top: var(--space-3); border-top: var(--panel-hairline) solid var(--color-divider); }
+@media (max-width: 620px) { .password { grid-template-columns: minmax(0, 1fr); } }

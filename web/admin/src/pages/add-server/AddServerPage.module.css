@@ -1,0 +1,349 @@
+/* ── Полоса шагов ───────────────────────────────────────────────────────── */
+
+.stepper {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border-bottom: var(--panel-rule) solid var(--color-divider);
+  margin-bottom: var(--space-6);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--panel-active-border) solid transparent;
+  color: var(--color-neutral-600);
+  cursor: pointer;
+  font: inherit;
+}
+
+.step + .step {
+  border-left: var(--panel-rule) solid var(--color-divider);
+}
+
+.step:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.stepActive {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}
+
+.stepNum {
+  font-size: var(--panel-micro-size);
+  letter-spacing: var(--panel-kicker-tracking);
+  text-transform: uppercase;
+}
+
+.stepLabel {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-item-size);
+}
+
+.stepHint {
+  font-size: var(--panel-small-size);
+}
+
+/* ── Раскладка ──────────────────────────────────────────────────────────── */
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: var(--space-8);
+}
+
+.main {
+  max-width: 620px;
+  min-width: 0;
+}
+
+.main .field {
+  margin-bottom: var(--space-3);
+}
+
+.aside {
+  padding-left: var(--space-6);
+  border-left: var(--panel-rule) solid var(--color-divider);
+  min-width: 0;
+}
+
+.list {
+  margin: 0 0 var(--space-6);
+  padding-left: var(--space-4);
+  font-size: var(--panel-meta-size);
+  line-height: 1.7;
+}
+
+.asideText {
+  margin: 0 0 var(--space-6);
+  font-size: var(--panel-meta-size);
+  color: var(--color-neutral-700);
+}
+
+.hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+.blocker {
+  margin: var(--space-3) 0 0;
+  font-size: var(--panel-meta-size);
+  color: var(--color-accent-700);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.keyArea {
+  min-height: 140px;
+  font-family: var(--panel-mono);
+  font-size: var(--panel-small-size);
+}
+
+/* Единственное место, где акцент занимает целый блок — так задумано
+   дизайн-системой: предупреждение должно быть заметным. */
+.poster {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  padding: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.posterKicker {
+  font-size: var(--panel-micro-size);
+  letter-spacing: var(--panel-kicker-tracking);
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin-bottom: var(--space-1);
+}
+
+.posterText {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-item-size);
+  line-height: 1.25;
+}
+
+/* ── Проверка подключения ───────────────────────────────────────────────── */
+
+.testOk,
+.testFail {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--panel-meta-size);
+  line-height: 1.6;
+  border: var(--panel-hairline) solid var(--color-divider);
+}
+
+.testFail {
+  border-color: var(--color-accent);
+  color: var(--color-accent-700);
+}
+
+.testWarn {
+  margin-top: var(--space-2);
+  color: var(--color-accent-700);
+}
+
+/* ── Протоколы ──────────────────────────────────────────────────────────── */
+
+.protocolList {
+  display: grid;
+  gap: var(--panel-rule);
+  background: var(--color-divider);
+  border: var(--panel-rule) solid var(--color-divider);
+  margin-bottom: var(--space-4);
+}
+
+.protocolRow {
+  background: var(--color-bg);
+  padding: var(--space-3);
+}
+
+.protocolHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.protocolName {
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-item-size);
+}
+
+.protocolNote {
+  margin-right: auto;
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+.toggle {
+  padding: 7px var(--space-3);
+  font-family: var(--font-heading);
+  font-weight: var(--font-heading-weight);
+  font-size: var(--panel-small-size);
+  letter-spacing: var(--panel-stat-tracking);
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--color-neutral-700);
+  border: var(--panel-hairline) solid var(--color-divider);
+  cursor: pointer;
+}
+
+.toggleOn {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-color: var(--color-accent);
+}
+
+.protocolFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+/* ── Прогресс и чеклист ─────────────────────────────────────────────────── */
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.progressTrack {
+  flex: 1;
+  block-size: var(--panel-bar-h);
+  background: var(--color-neutral-300);
+}
+
+.progressFill {
+  display: block;
+  block-size: 100%;
+  background: var(--color-accent);
+}
+
+.progressValue {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--panel-meta-size);
+}
+
+.checklist {
+  border-top: var(--panel-rule) solid var(--color-divider);
+}
+
+.checkRow {
+  display: grid;
+  grid-template-columns: var(--panel-mark) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: var(--panel-hairline) solid var(--color-divider);
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  inline-size: var(--panel-mark);
+  block-size: var(--panel-mark);
+  border: var(--panel-hairline) solid var(--color-divider);
+  font-size: var(--panel-small-size);
+}
+
+.markDone {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.markFailed {
+  border-color: var(--color-accent);
+  color: var(--color-accent-700);
+}
+
+.markRunning {
+  border-color: var(--color-accent);
+}
+
+.checkInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.checkTitle {
+  font-size: var(--panel-body-size);
+}
+
+.checkDetail {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  overflow-wrap: anywhere;
+}
+
+.checkError {
+  color: var(--color-accent-700);
+}
+
+.checkStatus {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  white-space: nowrap;
+}
+
+/* ── Журнал установки ───────────────────────────────────────────────────── */
+
+.logBlock {
+  margin-top: var(--space-4);
+}
+
+.log {
+  max-height: 320px;
+  overflow: auto;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  font-family: var(--panel-mono);
+  font-size: var(--panel-small-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1000px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .aside {
+    padding-left: 0;
+    border-left: 0;
+    border-top: var(--panel-rule) solid var(--color-divider);
+    padding-top: var(--space-6);
+  }
+
+  .stepper {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+  }
+
+  .step + .step {
+    border-left: 0;
+    border-top: var(--panel-hairline) solid var(--color-divider);
+  }
+}
