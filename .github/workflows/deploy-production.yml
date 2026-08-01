@@ -1,0 +1,122 @@
+name: Deploy production
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Immutable GHCR image tag to deploy
+        required: true
+        type: string
+      source_ref:
+        description: Commit SHA containing the matching deployment descriptors
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Immutable GHCR image tag to deploy (for example sha-<40-character-commit>)
+        required: true
+        type: string
+      source_ref:
+        description: Commit SHA containing the matching deployment descriptors
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  # A deployment must finish: cancelling a live `docker compose up` can leave
+  # the stack in a partial state.
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_PATH: ${{ vars.PRODUCTION_DEPLOY_PATH }}
+      PROXY_MODE: ${{ vars.PRODUCTION_PROXY_MODE }}
+      DEPLOY_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+      DEPLOY_PORT: ${{ vars.PRODUCTION_SSH_PORT || '22' }}
+      DEPLOY_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - name: Checkout the deployed revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Verify descriptors match the immutable image tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployed_sha=$(git rev-parse HEAD)
+          expected_tag="sha-$deployed_sha"
+          if [[ "$IMAGE_TAG" != "$expected_tag" ]]; then
+            echo "The checked out deployment descriptors are $deployed_sha, but IMAGE_TAG is $IMAGE_TAG." >&2
+            echo "For a manual rollback, source_ref must resolve to the commit encoded in image_tag." >&2
+            exit 1
+          fi
+
+      - name: Prepare strictly verified SSH access
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          test -s "$RUNNER_TEMP/deploy_key"
+          test -s "$RUNNER_TEMP/known_hosts"
+
+      - name: Upload deployment descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_PATH:?Set production variable PRODUCTION_DEPLOY_PATH}"
+          : "${PROXY_MODE:?Set production variable PRODUCTION_PROXY_MODE to nginx or traefik}"
+          : "${DEPLOY_HOST:?Set production secret PRODUCTION_SSH_HOST}"
+          : "${DEPLOY_USER:?Set production secret PRODUCTION_SSH_USER}"
+          if [[ ! "$DEPLOY_PATH" =~ ^/opt/[A-Za-z0-9._/-]+$ ]] || [[ "$DEPLOY_PATH" == *..* || "$DEPLOY_PATH" == *//* ]]; then
+            echo 'PRODUCTION_DEPLOY_PATH must not contain traversal or repeated separators.' >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo 'PRODUCTION_SSH_USER must be a lowercase Unix account name.' >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo 'PRODUCTION_SSH_HOST must be a DNS hostname or IPv4 address; IPv6 is not supported here.' >&2
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( DEPLOY_PORT < 1 || DEPLOY_PORT > 65535 )); then
+            echo 'PRODUCTION_SSH_PORT must be a TCP port from 1 through 65535.' >&2
+            exit 1
+          fi
+          case "$IMAGE_TAG" in sha-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+            *) echo 'IMAGE_TAG must be sha- followed by a 40-character lowercase commit SHA.' >&2; exit 1 ;;
+          esac
+          case "$PROXY_MODE" in nginx|traefik) ;; *) echo 'PRODUCTION_PROXY_MODE must be nginx or traefik.' >&2; exit 1 ;; esac
+          ssh_opts=(-i "$RUNNER_TEMP/deploy_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" -p "$DEPLOY_PORT")
+          scp_opts=(-i "$RUNNER_TEMP/deploy_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" -P "$DEPLOY_PORT")
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          ssh "${ssh_opts[@]}" "$remote" "mkdir -p '$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/nginx' '$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/traefik'"
+          scp "${scp_opts[@]}" docker-compose.yml docker-compose.mongo-auth.yml "$remote:$DEPLOY_PATH/incoming/$IMAGE_TAG/"
+          scp "${scp_opts[@]}" deploy/production/docker-compose.images.yml "$remote:$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/"
+          scp "${scp_opts[@]}" deploy/production/deploy.sh "$remote:$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/"
+          scp "${scp_opts[@]}" deploy/nginx/docker-compose.host-nginx.yml "$remote:$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/nginx/"
+          scp "${scp_opts[@]}" deploy/traefik/docker-compose.traefik.yml "$remote:$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/traefik/"
+
+      - name: Pull immutable images and apply the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_opts=(-i "$RUNNER_TEMP/deploy_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" -p "$DEPLOY_PORT")
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          ssh "${ssh_opts[@]}" "$remote" \
+            "bash '$DEPLOY_PATH/incoming/$IMAGE_TAG/deploy/deploy.sh' '$DEPLOY_PATH' '$IMAGE_TAG' '$DEPLOY_PATH/incoming/$IMAGE_TAG' '$PROXY_MODE'"

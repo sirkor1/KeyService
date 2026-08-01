@@ -1,0 +1,83 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  inline-size: var(--panel-sidebar-w);
+  flex: none;
+  padding: var(--space-4) 0 var(--space-8);
+  border-right: var(--panel-rule) solid var(--color-divider);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.groupTitle {
+  margin: 0 0 var(--space-2);
+  padding: 0 var(--panel-nav-item-pad-x);
+  font-size: var(--panel-nano-size);
+  letter-spacing: var(--panel-kicker-tracking);
+  color: var(--color-neutral-600);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--panel-nav-item-pad-y) var(--panel-nav-item-pad-x);
+  font-family: var(--font-heading);
+  font-size: var(--panel-body-size);
+  font-weight: 500;
+  /* Полоса есть всегда, но прозрачная: иначе активный пункт «прыгает». */
+  border-left: var(--panel-active-border) solid transparent;
+}
+
+.item:hover {
+  background: var(--panel-hover-bg);
+}
+
+.itemActive {
+  font-weight: var(--font-heading-weight);
+  border-left-color: var(--color-accent);
+  background: var(--panel-active-bg);
+}
+
+.itemLabel {
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemBadge {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Пункт, ведущий на ещё не готовый экран: подписан честно, а не молча ломается. */
+.itemPending {
+  font-size: var(--panel-nano-size);
+  letter-spacing: var(--panel-stat-tracking);
+  text-transform: uppercase;
+  color: var(--color-neutral-500);
+}
+
+.footer {
+  margin-top: auto;
+  padding: var(--space-4) var(--panel-nav-item-pad-x) 0;
+  border-top: var(--panel-rule) solid var(--color-divider);
+  font-size: var(--panel-micro-size);
+  line-height: 1.7;
+  color: var(--color-neutral-600);
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    inline-size: 100%;
+    border-right: 0;
+    border-bottom: var(--panel-rule) solid var(--color-divider);
+  }
+}

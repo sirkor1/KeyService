@@ -1,0 +1,18 @@
+# Fresh-volume bootstrap for MongoDB authentication.
+#
+# Use this file only for the first start of a known-empty mongo_data volume,
+# together with docker-compose.mongo-auth.yml. It is intentionally separate
+# from the steady-state auth override so root bootstrap credentials are not
+# retained in the running MongoDB container afterwards.
+
+services:
+  mongo:
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set a fresh root username outside the repository.}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set a fresh root password outside the repository.}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE_NAME:-amnezia_vpn}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?Set a fresh application username outside the repository.}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set a fresh application password outside the repository.}
+    volumes:
+      - mongo_data:/data/db
+      - ./docker/mongo-init/01-create-app-user.sh:/docker-entrypoint-initdb.d/01-create-app-user.sh:ro

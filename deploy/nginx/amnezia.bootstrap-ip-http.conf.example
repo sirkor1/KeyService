@@ -1,0 +1,22 @@
+# Temporary HTTP-only site used solely for ACME HTTP-01 validation of a
+# public IPv4 address. Replace PUBLIC_IPV4 with the VPS public IPv4 address.
+#
+# It intentionally does NOT proxy the panel over plaintext HTTP.  Enable it,
+# issue the certificate, then replace it with amnezia.ip.conf.example.
+
+server {
+    listen 80;
+    server_name PUBLIC_IPV4;
+
+    # Certbot --webroot creates files below this directory for HTTP-01.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    # Do not offer the administrator panel before TLS is working.
+    location / {
+        return 404;
+    }
+}

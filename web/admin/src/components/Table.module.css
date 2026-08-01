@@ -1,0 +1,32 @@
+/* Горизонтальная прокрутка живёт внутри таблицы: страница не должна
+   уезжать вбок из-за длинного хостнейма. */
+.scroll {
+  overflow-x: auto;
+}
+
+.scroll table {
+  table-layout: fixed;
+  min-width: 100%;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right {
+  text-align: right;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.empty {
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  font-size: var(--panel-meta-size);
+  color: var(--color-neutral-600);
+  border-top: var(--panel-rule) solid var(--color-divider);
+}

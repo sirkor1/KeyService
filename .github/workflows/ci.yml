@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Every job starts with no token privileges and asks only for what it uses.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend build and invariants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Restore
+        run: dotnet restore AmneziaKeyService.sln
+
+      - name: Build
+        run: dotnet build AmneziaKeyService.sln --configuration Release --no-restore
+
+      - name: Verify offline VPN invariants
+        run: dotnet run --project tools/VerifyVpnUri/VerifyVpnUri.csproj --configuration Release
+
+      - name: Verify monitoring invariants
+        run: dotnet run --project tools/VerifyMonitoring/VerifyMonitoring.csproj --configuration Release
+
+      - name: Verify panel settings invariants
+        run: dotnet run --project tools/VerifyPanelSettings/VerifyPanelSettings.csproj --configuration Release
+
+      - name: Verify refresh-token invariants
+        run: dotnet run --project tools/VerifyRefreshTokens/VerifyRefreshTokens.csproj --configuration Release
+
+      - name: Verify user-management invariants
+        run: dotnet run --project tools/VerifyUserManagement/VerifyUserManagement.csproj --configuration Release
+
+  event-bus:
+    name: Mongo event bus integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            **/*.csproj
+            global.json
+
+      - name: Verify event bus
+        run: >-
+          dotnet run --project tools/VerifyEvents/VerifyEvents.csproj
+          --configuration Release -- --mongo=mongodb://127.0.0.1:27017
+
+      - name: Verify legacy migration
+        env:
+          MONGO_URL: mongodb://127.0.0.1:27017
+        run: dotnet run --project tools/VerifyLegacyMigration/VerifyLegacyMigration.csproj --configuration Release
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web/admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Accessibility checks
+        run: npm run verify:a11y
+
+      - name: Production build
+        run: npm run build
+
+  container-build:
+    name: Container build (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Api
+          - service: worker
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Worker
+          - service: bot
+            file: Dockerfile
+            build-args: PROJECT=AmneziaKeyService.Bot
+          - service: web
+            file: web/admin/Dockerfile
+            build-args: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.build-args }}
+          push: false
+          tags: local/amnezia-${{ matrix.service }}:ci
+          cache-from: type=gha,scope=ci-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.service }}

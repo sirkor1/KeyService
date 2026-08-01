@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AmneziaKeyService.Tools.VerifyMonitoring</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AmneziaKeyService.Core\AmneziaKeyService.Core.csproj" />
+    <ProjectReference Include="..\..\src\AmneziaKeyService.Infrastructure\AmneziaKeyService.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

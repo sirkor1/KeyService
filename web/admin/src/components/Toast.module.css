@@ -1,0 +1,13 @@
+/* Снизу слева, инверсией — как в макете. */
+.toast {
+  position: fixed;
+  left: var(--panel-toast-offset);
+  bottom: var(--panel-toast-offset);
+  z-index: var(--panel-z-toast);
+  max-width: min(420px, calc(100vw - var(--space-8)));
+  padding: var(--space-3) calc(var(--space-4) + var(--space-1));
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: var(--panel-meta-size);
+  box-shadow: var(--shadow-md);
+}

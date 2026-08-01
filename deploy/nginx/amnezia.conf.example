@@ -1,0 +1,106 @@
+# /etc/nginx/sites-available/amnezia-key
+#
+# Replace panel.example.com before installing this file.  The corresponding
+# Compose override binds the panel to 127.0.0.1:8081, so this host Nginx is the
+# only process exposed to the Internet.  Certbot adds/maintains certificate
+# files but does not need to alter this configuration.
+
+upstream amnezia_panel {
+    server 127.0.0.1:8081;
+    keepalive 16;
+}
+
+upstream amnezia_api {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name panel.example.com;
+
+    # Leave this path unproxied: Certbot HTTP-01 uses it to validate the name.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name panel.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/panel.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panel.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # The panel accepts an SSH private key; its own Nginx uses the same 64 KiB
+    # limit.  Keep the outer proxy aligned so oversized requests are rejected
+    # before they reach an application container.
+    client_max_body_size 64k;
+    client_body_timeout 30s;
+
+    # Only headers not already emitted by the web container are set here.
+    # Add `includeSubDomains` only when every present and future subdomain is
+    # served over HTTPS as well; otherwise browsers will make it unreachable.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=()" always;
+
+    location / {
+        proxy_pass http://amnezia_panel;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 600s;
+    }
+
+    # Route the API directly instead of through the web container.  This
+    # preserves X-Forwarded-Proto=https for ASP.NET and avoids a second proxy.
+    location ^~ /api/jobs/ {
+        proxy_pass http://amnezia_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_buffering off;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://amnezia_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+}

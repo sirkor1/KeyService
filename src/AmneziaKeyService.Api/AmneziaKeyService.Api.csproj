@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Ни Serilog, ни Telegram.Bot здесь больше нет: бутстрап логирования уехал
+      в Infrastructure/Logging (он общий для трёх процессов), а бот — в отдельный
+      проект вместе с токеном.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AmneziaKeyService.Core\AmneziaKeyService.Core.csproj" />
+    <ProjectReference Include="..\AmneziaKeyService.Infrastructure\AmneziaKeyService.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

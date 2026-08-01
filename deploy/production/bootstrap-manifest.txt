@@ -1,0 +1,14 @@
+# Explicit non-secret initial production release files. bootstrap-vps.sh is
+# uploaded alongside, not inside release.zip: it verifies this ZIP has exactly
+# the remaining nine file entries. Never put .env, keys, backups, or secrets
+# here.
+docker-compose.yml
+docker-compose.mongo-auth.yml
+docker-compose.mongo-auth.fresh.yml
+docker/mongo-init/01-create-app-user.sh
+deploy/production/docker-compose.images.yml
+deploy/production/deploy.sh
+deploy/production/bootstrap-vps.sh
+deploy/nginx/docker-compose.host-nginx.yml
+deploy/nginx/amnezia.bootstrap-ip-http.conf.example
+deploy/nginx/amnezia.ip.conf.example

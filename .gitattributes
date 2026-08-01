@@ -1,0 +1,6 @@
+# Files executed by the Ubuntu bootstrapper must never acquire CRLF in a
+# Windows checkout. Compose descriptors are kept LF-only for deterministic
+# release archives as well.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

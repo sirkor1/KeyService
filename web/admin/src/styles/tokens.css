@@ -1,0 +1,70 @@
+/*
+  Проектные токены панели.
+
+  Дизайн-система задаёт шкалу отступов 4/8/12/16/24/32, но макет опирается
+  и на другие величины: ширина сайдбара, размер аватара, полоса загрузки,
+  толщина линеек. Собраны здесь, чтобы:
+    1) в TSX и CSS-модулях не появлялось сырых пикселей — правило oxlint
+       дизайн-системы запрещает их в строковых литералах;
+    2) перенастройка делалась в одном месте, а не по всей вёрстке.
+
+  Имена с префиксом --panel-, чтобы их нельзя было спутать с токенами
+  дизайн-системы: те трогать нельзя, styles.css скопирован дословно.
+*/
+:root {
+  /* ── Каркас ─────────────────────────────────────────────────────────── */
+  --panel-sidebar-w: 240px;
+  --panel-rule: 2px;              /* линейка между крупными блоками */
+  --panel-hairline: 1px;          /* линейка между строками */
+  --panel-active-border: 3px;     /* акцентная полоса активного пункта меню */
+
+  --panel-main-pad-y: 28px;
+  --panel-main-pad-x: 32px;
+  --panel-main-pad-bottom: 64px;
+  --panel-header-pad-y: 14px;
+  --panel-header-pad-x: 24px;
+  --panel-nav-item-pad-y: 9px;
+  --panel-nav-item-pad-x: 20px;
+
+  /* ── Элементы ───────────────────────────────────────────────────────── */
+  --panel-avatar: 30px;
+  --panel-bar-w: 56px;            /* полоса загрузки в таблице серверов */
+  --panel-bar-h: 6px;
+  --panel-divider-bar-w: 2px;     /* разделитель в строке статистики шапки */
+  --panel-divider-bar-h: 14px;
+  --panel-mark: 22px;             /* галочка в чеклисте установки */
+  --panel-toast-offset: 24px;
+
+  /* ── Типографика вне шкалы дизайн-системы ───────────────────────────── */
+  --panel-title-size: 34px;       /* h2 экрана: в системе 32px, в макете 34px */
+  --panel-kpi-size: 30px;
+  --panel-kpi-size-sm: 26px;      /* плитки на экране узла */
+  --panel-item-size: 17px;
+  --panel-body-size: 14px;
+  --panel-meta-size: 13px;
+  --panel-small-size: 12px;
+  --panel-micro-size: 11px;
+  --panel-nano-size: 10px;
+
+  --panel-kicker-tracking: 0.14em;
+  --panel-label-tracking: 0.1em;
+  --panel-brand-tracking: 0.16em;
+  --panel-th-tracking: 0.08em;
+  --panel-stat-tracking: 0.06em;
+
+  /* ── Слои ───────────────────────────────────────────────────────────── */
+  --panel-z-header: 5;
+  --panel-z-dialog: 10;
+  --panel-z-toast: 20;
+
+  /* ── Производные подложки ───────────────────────────────────────────── */
+  --panel-hover-bg: color-mix(in srgb, var(--color-text) 6%, transparent);
+  --panel-active-bg: color-mix(in srgb, var(--color-text) 5%, transparent);
+  --panel-row-hover-bg: color-mix(in srgb, var(--color-text) 4%, transparent);
+  --panel-selected-bg: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg));
+
+  /* Моноширинный ряд для идентификаторов, ключей и IP.
+     Сам шрифт системный: дизайн-система задаёт только Archivo, а таблицы
+     с base64-ключами без моноширинного начертания читать невозможно. */
+  --panel-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
