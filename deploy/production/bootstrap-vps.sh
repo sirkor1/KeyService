@@ -391,8 +391,10 @@ create_steady_env_if_absent() {
     if ((resume == 0)); then
       fail "refusing to overwrite existing $env_file; use -Resume only for a prior interrupted bootstrap."
     fi
-    grep -Eq '^(MONGO_ROOT_(USERNAME|PASSWORD)|MONGO_APP_(USERNAME|PASSWORD))=' "$env_file" && fail 'existing .env stores raw Mongo bootstrap credentials; resolve this manually before resuming.'
-    return
+    if grep -Eq '^(MONGO_ROOT_(USERNAME|PASSWORD)|MONGO_APP_(USERNAME|PASSWORD))=' "$env_file"; then
+      fail 'existing .env stores raw Mongo bootstrap credentials; resolve this manually before resuming.'
+    fi
+    return 0
   fi
 
   local temporary jwt_secret data_protection_key mongo_password_encoded
@@ -425,7 +427,7 @@ assert_resume_app_password_matches_env() {
   # A partially completed bootstrap has already persisted an application URI.
   # Recreating the fresh Mongo volume with a different password would create a
   # user that cannot authenticate with that URI, so fail before changing Mongo.
-  [[ -f "$env_file" ]] || return
+  [[ -f "$env_file" ]] || return 0
 
   local persisted_uri expected_uri encoded_password
   persisted_uri=$(sed -nE "s/^MONGODB_CONNECTION_STRING='([^']*)'$/\1/p" "$env_file")
@@ -521,7 +523,7 @@ bootstrap_mongo_if_needed() {
 
   if [[ "$phase" == 'mongo-steady' || "$phase" == 'applications-started' || "$phase" == 'complete' ]]; then
     wait_for_mongo_health
-    return
+    return 0
   fi
 
   if [[ -z "$phase" ]]; then
@@ -647,7 +649,7 @@ EOF
 
 login_ghcr() {
   if ((public_images == 1)); then
-    return
+    return 0
   fi
   printf '%s' "$GHCR_PAT" | runuser -u "$deploy_user" -- env "HOME=/home/$deploy_user" \
     docker login ghcr.io --username "$ghcr_username" --password-stdin >/dev/null
@@ -672,7 +674,7 @@ start_application() {
     if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8081/ -o /dev/null; then
       wait_for_runtime_services
       write_progress 'applications-started'
-      return
+      return 0
     fi
     sleep 2
   done
@@ -755,7 +757,7 @@ main() {
     wait_for_runtime_services
     assert_runtime_hardening
     printf 'bootstrap: existing installation is healthy; no secrets or persistent files were changed.\n'
-    return
+    return 0
   fi
 
   read_secret_records
