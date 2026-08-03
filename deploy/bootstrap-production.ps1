@@ -489,11 +489,43 @@ try {
     $keyscanResult = Invoke-NativeCapture $sshKeyscan @('-T', '10', '-t', 'ed25519', '-p', "$SshPort", '-H', $HostAddress)
     if ($keyscanResult.ExitCode -ne 0) {
         $detail = $keyscanResult.StdErr.Trim()
-        Fail "ssh-keyscan failed with exit code $($keyscanResult.ExitCode): $detail"
+        # OpenSSH_for_Windows 9.5's ssh-keyscan cannot negotiate some newer
+        # server KEX methods (notably sntrup761x25519-sha512@openssh.com).
+        # Use ssh only to obtain its host-key record in a temporary known_hosts
+        # file.  All user-authentication methods are disabled, so this cannot
+        # prompt for or transmit credentials; its non-zero exit is expected.
+        if ($detail -notmatch '(?i)unsupported KEX method') {
+            Fail "ssh-keyscan failed with exit code $($keyscanResult.ExitCode): $detail"
+        }
+        Write-Host 'ssh-keyscan cannot negotiate the server KEX; using SSH host-key probe fallback.'
+        $probeResult = Invoke-NativeCapture $ssh @(
+            '-o', 'BatchMode=yes',
+            '-o', 'StrictHostKeyChecking=accept-new',
+            '-o', "UserKnownHostsFile=$knownHosts",
+            '-o', 'GlobalKnownHostsFile=NUL',
+            '-o', 'HashKnownHosts=yes',
+            '-o', 'HostKeyAlgorithms=ssh-ed25519',
+            '-o', 'PreferredAuthentications=none',
+            '-o', 'PubkeyAuthentication=no',
+            '-o', 'PasswordAuthentication=no',
+            '-o', 'KbdInteractiveAuthentication=no',
+            '-o', 'ChallengeResponseAuthentication=no',
+            '-o', 'NumberOfPasswordPrompts=0',
+            '-p', "$SshPort",
+            "amnezia-hostkey-probe@$HostAddress",
+            'true'
+        ) 15000
+        # Authentication must fail because every method is disabled.  The
+        # host key is written before authentication and is verified below.
+        if ($probeResult.TimedOut) {
+            Fail 'SSH host-key probe timed out.'
+        }
     }
-    [IO.File]::WriteAllText($knownHosts, $keyscanResult.StdOut, [Text.Encoding]::ASCII)
+    else {
+        [IO.File]::WriteAllText($knownHosts, $keyscanResult.StdOut, [Text.Encoding]::ASCII)
+    }
     if (-not (Test-Path -LiteralPath $knownHosts) -or (Get-Item -LiteralPath $knownHosts).Length -eq 0) {
-        Fail 'ssh-keyscan returned no ED25519 host key.'
+        Fail 'SSH host-key lookup returned no ED25519 host key.'
     }
 
     $fingerprintLines = & $sshKeygen -lf $knownHosts -E sha256

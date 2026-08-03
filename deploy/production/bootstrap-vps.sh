@@ -215,12 +215,50 @@ install_docker() {
   dpkg --compare-versions "$compose_version" ge '2.24.4' || fail 'Docker Compose 2.24.4 or newer is required.'
 }
 
+wait_for_snapd() {
+  # apt can replace snapd while this bootstrap is running.  Wait for both the
+  # socket and the initial snap state before issuing changes; otherwise the
+  # first snap command can race snapd's post-upgrade restart/rollback.
+  local deadline
+  systemctl enable --now snapd.socket
+  deadline=$((SECONDS + 120))
+  while ((SECONDS < deadline)); do
+    if systemctl is-active --quiet snapd.socket && \
+      timeout 5 snap wait system seed.loaded >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  fail 'snapd did not become ready within 120 seconds.'
+}
+
+run_snap_change() {
+  # A snapd package upgrade can finish just before its daemon has restarted.
+  # Retry the complete change a few times, but surface a persistent install or
+  # refresh failure instead of treating it as optional.
+  local attempt
+  for attempt in {1..3}; do
+    wait_for_snapd
+    if snap "$@"; then
+      return 0
+    fi
+    if ((attempt < 3)); then
+      printf 'bootstrap: snap command failed; waiting before retry %d/3.\n' "$((attempt + 1))" >&2
+      sleep 2
+    fi
+  done
+  fail 'snap command failed after 3 attempts.'
+}
+
 install_certbot() {
-  systemctl enable --now snapd.socket || true
-  snap install core >/dev/null 2>&1 || true
-  snap refresh core >/dev/null
+  wait_for_snapd
+  if ! snap list core >/dev/null 2>&1; then
+    run_snap_change install core
+  fi
+  wait_for_snapd
+
   if ! snap list certbot >/dev/null 2>&1; then
-    snap install --classic certbot
+    run_snap_change install --classic certbot
   fi
   ln -sfn /snap/bin/certbot /usr/local/bin/certbot
 
