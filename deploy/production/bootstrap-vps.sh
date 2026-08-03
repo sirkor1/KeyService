@@ -466,7 +466,13 @@ read_phase() {
 }
 
 run_as_deploy() {
-  runuser -u "$deploy_user" -- env "HOME=/home/$deploy_user" "$@"
+  # The bootstrap enters over SSH as root, whose default working directory is
+  # usually /root (mode 0700).  runuser preserves that cwd, and recent Docker
+  # Compose versions stat `.` while loading a compose file even when every
+  # -f path is absolute.  Start each deploy-user command from the accessible
+  # deployment directory instead.
+  runuser -u "$deploy_user" -- env "HOME=/home/$deploy_user" \
+    sh -c 'cd "$1" && shift && exec "$@"' sh "$deploy_path" "$@"
 }
 
 compose_base() {
