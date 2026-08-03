@@ -348,7 +348,13 @@ install_release_files() {
     target="$release_dir/$source"
     parent=$(dirname "$target")
     install -d -m 0750 -o root -g "$deploy_user" "$parent"
-    if [[ "$source" == 'docker/mongo-init/01-create-app-user.sh' || "$source" == 'deploy/production/deploy.sh' ]]; then
+    if [[ "$source" == 'docker/mongo-init/01-create-app-user.sh' ]]; then
+      # The official mongo:8 entrypoint drops to the unprivileged `mongodb`
+      # user before it sources initdb shell hooks.  This hook contains no
+      # secrets (they come only from the container environment), so it must be
+      # readable and executable by that user rather than limited to deploy.
+      install -m 0555 -o root -g root "$work_dir/release/$source" "$target"
+    elif [[ "$source" == 'deploy/production/deploy.sh' ]]; then
       install -m 0750 -o root -g "$deploy_user" "$work_dir/release/$source" "$target"
     else
       install -m 0640 -o root -g "$deploy_user" "$work_dir/release/$source" "$target"
@@ -480,7 +486,52 @@ wait_for_mongo_health() {
     fi
     sleep 2
   done
+  diagnose_mongo_health_failure
   fail 'MongoDB did not become healthy.'
+}
+
+diagnose_mongo_health_failure() {
+  # Do not inspect container environment or print healthcheck output: both can
+  # contain the application URI. MongoDB's own recent startup logs identify
+  # init-hook and storage failures without exposing bootstrap passwords.
+  local mongo_id state health restart_count
+  mongo_id=$(run_as_deploy "$(command -v docker)" compose --project-name "$PROJECT_NAME" --env-file "$env_file" \
+    -f "$release_dir/docker-compose.yml" -f "$release_dir/docker-compose.mongo-auth.yml" ps -aq mongo 2>/dev/null || true)
+  if [[ -z "$mongo_id" ]]; then
+    printf 'bootstrap: MongoDB diagnostics: no container was created.\n' >&2
+    return 0
+  fi
+
+  state=$(docker inspect --format '{{.State.Status}}' "$mongo_id" 2>/dev/null || printf 'unknown')
+  health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$mongo_id" 2>/dev/null || printf 'unknown')
+  restart_count=$(docker inspect --format '{{.RestartCount}}' "$mongo_id" 2>/dev/null || printf 'unknown')
+  printf 'bootstrap: MongoDB diagnostics: state=%s health=%s restarts=%s. Recent MongoDB logs follow (connection URIs are redacted):\n' \
+    "$state" "$health" "$restart_count" >&2
+  docker logs --tail 80 "$mongo_id" 2>&1 | \
+    sed -E 's#mongodb(\+srv)?://[^[:space:]"'"'"']+#mongodb\1://[redacted]#g' >&2 || true
+}
+
+wait_for_mongo_root_auth() {
+  # Only used to recover the known fresh-starting phase. The password expands
+  # inside the transient Mongo container and never appears in host arguments,
+  # diagnostics, or the steady-state environment.
+  local mongo_id pid1_command attempt
+  for attempt in {1..45}; do
+    # Label lookup avoids giving deploy_user access to the root-only fresh env
+    # merely to ask Compose for an already-created container ID.
+    mongo_id=$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT_NAME}" \
+      --filter 'label=com.docker.compose.service=mongo' | head -n1)
+    pid1_command=$(docker exec "$mongo_id" sh -c 'cat /proc/1/comm' 2>/dev/null || true)
+    if [[ -n "$mongo_id" && "$pid1_command" == 'mongod' ]] && docker exec "$mongo_id" sh -c \
+      'mongosh --quiet --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"' \
+      >/dev/null 2>&1; then
+      printf '%s' "$mongo_id"
+      return 0
+    fi
+    sleep 2
+  done
+  diagnose_mongo_health_failure
+  fail 'MongoDB fresh-start recovery could not authenticate the bootstrap root user; the existing volume was left unchanged.'
 }
 
 wait_for_runtime_services() {
@@ -517,7 +568,7 @@ wait_for_runtime_services() {
 }
 
 bootstrap_mongo_if_needed() {
-  local phase volume_name
+  local phase volume_name recovering_fresh_start=0 mongo_id
   phase=$(read_phase)
   volume_name="${PROJECT_NAME}_mongo_data"
 
@@ -533,6 +584,12 @@ bootstrap_mongo_if_needed() {
     write_progress 'mongo-fresh-starting'
   elif ((resume == 0)); then
     fail 'an interrupted bootstrap was found; rerun with -Resume after confirming the same Mongo passwords.'
+  elif [[ "$phase" == 'mongo-fresh-starting' ]] && docker volume inspect "$volume_name" >/dev/null 2>&1; then
+    # A failed first init can leave a non-empty volume (the official entrypoint
+    # creates the root user before it sources application hooks). Recovery is
+    # gated by authenticating that known root user; it never removes or
+    # recreates the volume.
+    recovering_fresh_start=1
   fi
 
   if ((resume == 1)); then
@@ -554,14 +611,34 @@ bootstrap_mongo_if_needed() {
   write_env_line_to "$fresh_env" 'MONGO_APP_PASSWORD' "$MONGO_APP_PASSWORD"
   write_env_line_to "$fresh_env" 'MONGO_DATABASE_NAME' "$MONGO_DATABASE"
 
-  docker compose --project-name "$PROJECT_NAME" --env-file "$fresh_env" \
-    -f "$release_dir/docker-compose.yml" \
-    -f "$release_dir/docker-compose.mongo-auth.yml" \
-    -f "$release_dir/docker-compose.mongo-auth.fresh.yml" up -d mongo
+  if ((recovering_fresh_start)); then
+    # A previous failed init can leave a stopped container whose environment
+    # still contains the old one-time values. Recreate only that container so
+    # the root-auth gate below verifies exactly this invocation's credentials;
+    # named volumes are never removed by --force-recreate.
+    docker compose --project-name "$PROJECT_NAME" --env-file "$fresh_env" \
+      -f "$release_dir/docker-compose.yml" \
+      -f "$release_dir/docker-compose.mongo-auth.yml" \
+      -f "$release_dir/docker-compose.mongo-auth.fresh.yml" up -d --force-recreate mongo
+  else
+    docker compose --project-name "$PROJECT_NAME" --env-file "$fresh_env" \
+      -f "$release_dir/docker-compose.yml" \
+      -f "$release_dir/docker-compose.mongo-auth.yml" \
+      -f "$release_dir/docker-compose.mongo-auth.fresh.yml" up -d mongo
+  fi
   # Compose has read the one-time credentials. Remove the source immediately;
   # cleanup still handles failures and signal-driven interruption before here.
   rm -f -- "$fresh_env"
   fresh_env=''
+
+  if ((recovering_fresh_start)); then
+    # Run the repair only once PID 1 is the final mongod rather than the image
+    # entrypoint's temporary init server. The script is idempotent and changes
+    # only the known application account; a root-auth failure stops without
+    # changing database data.
+    mongo_id=$(wait_for_mongo_root_auth)
+    docker exec "$mongo_id" /docker-entrypoint-initdb.d/01-create-app-user.sh
+  fi
   wait_for_mongo_health
   write_progress 'mongo-fresh-created'
 
