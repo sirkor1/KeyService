@@ -511,10 +511,16 @@ diagnose_mongo_health_failure() {
     sed -E 's#mongodb(\+srv)?://[^[:space:]"'"'"']+#mongodb\1://[redacted]#g' >&2 || true
 }
 
-wait_for_mongo_root_auth() {
-  # Only used to recover the known fresh-starting phase. The password expands
-  # inside the transient Mongo container and never appears in host arguments,
-  # diagnostics, or the steady-state environment.
+mongo_root_authenticates() {
+  local mongo_id=$1
+  # The password expands inside the transient Mongo container and never
+  # appears in host arguments, diagnostics, or the steady-state environment.
+  docker exec "$mongo_id" sh -c \
+    'mongosh --quiet --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"' \
+    >/dev/null 2>&1
+}
+
+wait_for_final_mongod() {
   local mongo_id pid1_command attempt
   for attempt in {1..45}; do
     # Label lookup avoids giving deploy_user access to the root-only fresh env
@@ -522,16 +528,39 @@ wait_for_mongo_root_auth() {
     mongo_id=$(docker ps -aq --filter "label=com.docker.compose.project=${PROJECT_NAME}" \
       --filter 'label=com.docker.compose.service=mongo' | head -n1)
     pid1_command=$(docker exec "$mongo_id" sh -c 'cat /proc/1/comm' 2>/dev/null || true)
-    if [[ -n "$mongo_id" && "$pid1_command" == 'mongod' ]] && docker exec "$mongo_id" sh -c \
-      'mongosh --quiet --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"' \
-      >/dev/null 2>&1; then
+    if [[ -n "$mongo_id" && "$pid1_command" == 'mongod' ]]; then
       printf '%s' "$mongo_id"
       return 0
     fi
     sleep 2
   done
   diagnose_mongo_health_failure
-  fail 'MongoDB fresh-start recovery could not authenticate the bootstrap root user; the existing volume was left unchanged.'
+  fail 'MongoDB fresh-start recovery did not reach the final mongod process; the existing volume was left unchanged.'
+}
+
+recover_fresh_mongo_users() {
+  local mongo_id
+  mongo_id=$(wait_for_final_mongod)
+  if mongo_root_authenticates "$mongo_id"; then
+    printf '%s' "$mongo_id"
+    return 0
+  fi
+
+  # MongoDB's localhost exception allows exactly this first createUser only
+  # when the entire deployment has no users or roles. It is therefore the
+  # atomic zero-users guard; querying system.users is not permitted by that
+  # exception. The command connects only inside the container and consumes no
+  # host-supplied secret arguments.
+  if ! docker exec "$mongo_id" sh -c \
+    'mongosh --quiet --host 127.0.0.1 admin --eval "$1"' sh \
+    'db.createUser({ user: process.env.MONGO_INITDB_ROOT_USERNAME, pwd: process.env.MONGO_INITDB_ROOT_PASSWORD, roles: [{ role: "root", db: "admin" }] }); quit(0);' \
+    >/dev/null 2>&1; then
+    diagnose_mongo_health_failure
+    fail 'MongoDB bootstrap root authentication failed and the localhost zero-users guard did not permit root creation; the existing volume was left unchanged.'
+  fi
+  mongo_root_authenticates "$mongo_id" || \
+    fail 'MongoDB bootstrap root was created but could not authenticate; the existing volume was left unchanged.'
+  printf '%s' "$mongo_id"
 }
 
 wait_for_runtime_services() {
@@ -636,7 +665,7 @@ bootstrap_mongo_if_needed() {
     # entrypoint's temporary init server. The script is idempotent and changes
     # only the known application account; a root-auth failure stops without
     # changing database data.
-    mongo_id=$(wait_for_mongo_root_auth)
+    mongo_id=$(recover_fresh_mongo_users)
     docker exec "$mongo_id" /docker-entrypoint-initdb.d/01-create-app-user.sh
   fi
   wait_for_mongo_health
