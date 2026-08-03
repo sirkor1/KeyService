@@ -819,9 +819,13 @@ remove_admin_seed_password_after_owner_exists() {
 
 assert_runtime_hardening() {
   # No direct service binding may escape the loopback-only host-Nginx overlay.
-  local listening
+  local listening public_listeners
   listening=$(ss -ltnH '( sport = :8080 or sport = :8081 or sport = :8082 or sport = :27017 or sport = :5341 )' || true)
-  if grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\[::\]|::):' <<< "$listening"; then
+  # Only column 4 is the local listener.  Testing the complete ss row also
+  # matches the normal peer wildcard (0.0.0.0:*) of a loopback-only listener.
+  public_listeners=$(awk '$4 ~ /^(\*|0\.0\.0\.0|\[::\]|::):/ { print }' <<< "$listening")
+  if [[ -n "$public_listeners" ]]; then
+    printf 'bootstrap: private-service public listener(s) detected:\n%s\n' "$public_listeners" >&2
     fail 'a private service port is listening on a public interface.'
   fi
   curl --fail --silent --show-error --max-time 10 "https://${public_ipv4}/" -o /dev/null
