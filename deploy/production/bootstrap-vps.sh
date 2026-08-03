@@ -538,8 +538,11 @@ bootstrap_mongo_if_needed() {
   fi
 
   # The raw credentials exist only in this tmpfs file and the initial Mongo
-  # container. The following steady-state recreation removes those container
-  # environment variables again.
+  # container. Run this one command as root so the 0600 file stays root-owned:
+  # deploy_user is in the root-equivalent docker group, but must not gain a
+  # separate filesystem read path to these raw values. Do not make the file
+  # group- or world-readable. The following steady-state recreation removes
+  # those container environment variables again.
   fresh_env=$(mktemp /dev/shm/amnezia-mongo-bootstrap.XXXXXX)
   chmod 0600 "$fresh_env"
   cat "$env_file" > "$fresh_env"
@@ -549,10 +552,14 @@ bootstrap_mongo_if_needed() {
   write_env_line_to "$fresh_env" 'MONGO_APP_PASSWORD' "$MONGO_APP_PASSWORD"
   write_env_line_to "$fresh_env" 'MONGO_DATABASE_NAME' "$MONGO_DATABASE"
 
-  run_as_deploy "$(command -v docker)" compose --project-name "$PROJECT_NAME" --env-file "$fresh_env" \
+  docker compose --project-name "$PROJECT_NAME" --env-file "$fresh_env" \
     -f "$release_dir/docker-compose.yml" \
     -f "$release_dir/docker-compose.mongo-auth.yml" \
     -f "$release_dir/docker-compose.mongo-auth.fresh.yml" up -d mongo
+  # Compose has read the one-time credentials. Remove the source immediately;
+  # cleanup still handles failures and signal-driven interruption before here.
+  rm -f -- "$fresh_env"
+  fresh_env=''
   wait_for_mongo_health
   write_progress 'mongo-fresh-created'
 
