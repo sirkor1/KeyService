@@ -4,6 +4,7 @@ using AmneziaKeyService.Infrastructure.Events;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using Telegram.Bot;
+using Telegram.Bot.Types.ReplyMarkups;
 
 namespace AmneziaKeyService.Bot.Services;
 
@@ -12,27 +13,24 @@ namespace AmneziaKeyService.Bot.Services;
 /// <see cref="TelegramBotService.CreateNewVpnConfigAsync"/> — worker создаёт
 /// ключ и публикует это событие с адресом чата и плейсхолдером «⏳ Готовлю…».
 ///
-/// Ссылка vpn:// собирается здесь же, а не приходит в payload: узел для
-/// этого не нужен — <see cref="IVpnConfigReader"/> строит её по уже
-/// сохранённому <see cref="VpnClient"/>, а секретам не место в теле события.
+/// После успешной выдачи предлагает получить ключ как VPN URI или файл .conf.
+/// Сами конфигурации строятся только после выбора пользователя и не попадают
+/// в payload события.
 /// </summary>
 public class KeyIssuedNotificationHandler : IDomainEventHandler
 {
     private readonly ITelegramBotClient _bot;
     private readonly IVpnClientRepository _clients;
-    private readonly IVpnConfigReader _configReader;
     private readonly ILogger<KeyIssuedNotificationHandler> _logger;
 
     public KeyIssuedNotificationHandler(
         ITelegramBotClient bot,
         IVpnClientRepository clients,
-        IVpnConfigReader configReader,
         ILogger<KeyIssuedNotificationHandler> logger)
     {
-        _bot          = bot;
-        _clients      = clients;
-        _configReader = configReader;
-        _logger       = logger;
+        _bot     = bot;
+        _clients = clients;
+        _logger  = logger;
     }
 
     public string EventType => DomainEventTypes.NotifyKeyIssued;
@@ -74,13 +72,25 @@ public class KeyIssuedNotificationHandler : IDomainEventHandler
             };
         }
 
-        var uri = await _configReader.BuildVpnUriAsync(client, ct);
+        var keyboard = new InlineKeyboardMarkup(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData(
+                    "🔗 Получить VPN URI", $"keyuri:{client.Id}:m")
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithCallbackData(
+                    "📄 Скачать файл .conf", $"keyconf:{client.Id}:m")
+            }
+        });
 
-        // Так это выглядит в синхронном варианте: сначала правим плейсхолдер,
-        // затем шлём саму ссылку отдельным сообщением — её проще скопировать,
-        // когда она не смешана с остальным текстом.
-        await ReplyAsync(payload.Target, "✅ Ключ создан", ct);
-        await _bot.SendMessage(payload.Target.ChatId, uri, cancellationToken: ct);
+        await ReplyAsync(
+            payload.Target,
+            "✅ Ключ создан. Выберите, как получить конфигурацию:",
+            keyboard,
+            ct);
 
         return new BsonDocument
         {
@@ -90,8 +100,22 @@ public class KeyIssuedNotificationHandler : IDomainEventHandler
     }
 
     /// <summary>Правит сообщение-плейсхолдер, если оно есть, иначе шлёт новое.</summary>
-    private Task ReplyAsync(TelegramTarget target, string text, CancellationToken ct)
+    private Task ReplyAsync(
+        TelegramTarget target,
+        string text,
+        CancellationToken ct)
+        => ReplyAsync(target, text, replyMarkup: null, ct);
+
+    private Task ReplyAsync(
+        TelegramTarget target,
+        string text,
+        InlineKeyboardMarkup? replyMarkup,
+        CancellationToken ct)
         => target.MessageId is { } messageId
-            ? _bot.EditMessageText(target.ChatId, messageId, text, cancellationToken: ct)
-            : _bot.SendMessage(target.ChatId, text, cancellationToken: ct);
+            ? _bot.EditMessageText(
+                target.ChatId, messageId, text,
+                replyMarkup: replyMarkup, cancellationToken: ct)
+            : _bot.SendMessage(
+                target.ChatId, text,
+                replyMarkup: replyMarkup, cancellationToken: ct);
 }

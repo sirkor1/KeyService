@@ -768,7 +768,7 @@ public class TelegramBotService : IHostedService
 
     /// <summary>
     /// Больше не заводит peer сам — публикует заявку key.issue и отвечает
-    /// «готовлю». Саму ссылку присылает <see cref="KeyIssuedNotificationHandler"/>
+    /// «готовлю». Выбор способа получения присылает <see cref="KeyIssuedNotificationHandler"/>
     /// по событию notify.key_issued, которое worker публикует по завершении
     /// выдачи.
     /// </summary>
@@ -788,7 +788,7 @@ public class TelegramBotService : IHostedService
         }
 
         await bot.EditMessageText(chatId, messageId,
-            "⏳ Готовлю ключ… пришлю ссылку следующим сообщением",
+            "⏳ Готовлю ключ… после создания предложу VPN URI или файл .conf",
             cancellationToken: ct);
 
         // Идентификатор назначаем здесь же — по нему KeyIssueHandler.OnFailedAsync
