@@ -1,4 +1,4 @@
-import type { KeyListParams, LogListParams, ServerListParams, UserListParams } from './endpoints';
+import type { KeyListParams, LogListParams, NotificationListParams, ServerListParams, UserListParams } from './endpoints';
 
 /**
  * Ключи кеша TanStack Query. Собраны в одном месте, чтобы инвалидация
@@ -22,6 +22,10 @@ export const qk = {
   userDetail: (id: string) => ['users', 'detail', id] as const,
 
   passcodes: ['passcodes'] as const,
+
+  notifications: ['notifications'] as const,
+  notificationList: (params: NotificationListParams) => ['notifications', 'list', params] as const,
+  notificationAudience: ['notifications', 'audience'] as const,
 
   logs: ['logs'] as const,
   logList: (params: LogListParams) => ['logs', 'list', params] as const,

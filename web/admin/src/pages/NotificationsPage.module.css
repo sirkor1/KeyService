@@ -1,0 +1,64 @@
+.composer {
+  display: grid;
+  gap: var(--space-3);
+  max-inline-size: 46rem;
+  padding: var(--space-4);
+  border: var(--panel-hairline) solid var(--color-divider);
+  background: var(--color-surface);
+}
+
+.counter {
+  align-self: end;
+  color: var(--color-neutral-600);
+  font-size: var(--panel-small-size);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: fit-content;
+}
+
+.composeFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.audience, .meta, .stats {
+  color: var(--color-neutral-600);
+  font-size: var(--panel-small-size);
+}
+
+.history { margin-block-start: var(--space-6); }
+.history > h3 { margin-block-end: var(--space-3); }
+.list { display: grid; gap: var(--space-3); }
+
+.card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--panel-hairline) solid var(--color-divider);
+  background: var(--color-bg);
+}
+
+.cardHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.cardHeader h4 { margin: 0 0 var(--space-1); }
+.preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.progress { inline-size: 100%; accent-color: var(--color-accent); }
+.stats { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.error { margin: 0; color: var(--color-accent-700); font-size: var(--panel-small-size); }
+.cardActions { display: flex; justify-content: end; }
+
+@media (max-width: 720px) {
+  .composeFooter, .cardHeader { align-items: stretch; flex-direction: column; }
+  .composeFooter > button { inline-size: 100%; }
+}

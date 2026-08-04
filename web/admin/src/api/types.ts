@@ -14,6 +14,30 @@ export interface Paged<T> {
   pageSize: number;
 }
 
+// ── Массовые уведомления ─────────────────────────────────────────────────
+
+export type NotificationCampaignStatus = 'queued' | 'running' | 'completed' | 'canceled' | 'failed';
+
+export interface NotificationCampaign {
+  id: string;
+  title: string;
+  text: string;
+  disableNotification: boolean;
+  status: NotificationCampaignStatus;
+  totalCount: number;
+  sentCount: number;
+  failedCount: number;
+  skippedCount: number;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface NotificationAudience {
+  recipientCount: number;
+}
+
 // ── Авторизация ────────────────────────────────────────────────────────────
 
 export type UserRole = 'owner' | 'admin' | 'operator' | 'viewer' | 'client';

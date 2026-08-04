@@ -20,6 +20,8 @@ import type {
   ServerListItem,
   UserListItem,
   PassCode,
+  NotificationAudience,
+  NotificationCampaign,
 } from './types';
 
 export interface ListParams {
@@ -184,6 +186,27 @@ export const passcodes = {
   list: () => api.get<PassCode[]>('/passcodes'),
   create: (code: string) => api.post<PassCode>('/passcodes', { code }),
   revoke: (id: string) => api.delete<void>(`/passcodes/${id}`),
+};
+
+export interface NotificationListParams extends ListParams {
+  status?: string;
+}
+
+export interface CreateNotificationBody {
+  title?: string;
+  text: string;
+  disableNotification: boolean;
+}
+
+export const notifications = {
+  list: (params: NotificationListParams = {}) =>
+    api.get<Paged<NotificationCampaign>>('/notifications', { ...params }),
+  audience: () => api.get<NotificationAudience>('/notifications/audience'),
+  get: (id: string) => api.get<NotificationCampaign>(`/notifications/${id}`),
+  create: (body: CreateNotificationBody) =>
+    api.post<NotificationCampaign>('/notifications', body),
+  cancel: (id: string) =>
+    api.post<NotificationCampaign>(`/notifications/${id}/cancel`),
 };
 
 export interface LogListParams extends ListParams {

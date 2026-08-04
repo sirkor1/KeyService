@@ -39,6 +39,7 @@ function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, c
       items: [
         ...(canAdmin ? [{ to: '/users', label: 'Пользователи', ...(badges ? { badge: badges.users } : {}) }] : []),
         ...(canWrite ? [{ to: '/passcodes', label: 'Пригласительные коды' }] : []),
+        ...(canAdmin ? [{ to: '/notifications', label: 'Рассылки' }] : []),
         { to: '/keys/issue', label: 'Выдать ключ' },
       ],
     },

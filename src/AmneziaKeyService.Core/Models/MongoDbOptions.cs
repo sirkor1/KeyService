@@ -28,6 +28,9 @@ public class MongoDbOptions
 
     public string DomainEventsCollection { get; set; } = "domain_events";
 
+    public string NotificationCampaignsCollection { get; set; } = "notification_campaigns";
+    public string NotificationDeliveriesCollection { get; set; } = "notification_deliveries";
+
     /// <summary>Именованные аренды: партиции и таймерные воркеры.</summary>
     public string LeasesCollection { get; set; } = "leases";
 }

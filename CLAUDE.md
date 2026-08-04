@@ -159,6 +159,8 @@ docker compose up -d --build
 `Cors__Origins` (только для dev-сервера Vite), `Seq__ServerUrl` и `Seq__ApiKey`
 (пустой URL отключает сток логов), секция `Polling` (интервалы фоновых воркеров;
 `Polling__Enabled=false` выключает все четыре — так они и настроены локально).
+Секция `Notifications` управляет массовыми Telegram-рассылками: включением,
+размером пачки, числом сообщений в секунду, повторами и TTL аренды доставки.
 
 ### MongoDB authentication
 

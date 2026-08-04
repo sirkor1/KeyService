@@ -30,6 +30,11 @@ public interface IUserRepository
     Task<List<User>> GetByIdsAsync(IEnumerable<string> ids, CancellationToken ct = default);
 
     Task<long> CountAsync(CancellationToken ct = default);
+
+    /// <summary>Активные пользователи, с которыми бот уже связал Telegram-чат.</summary>
+    Task<List<User>> GetTelegramRecipientsAsync(CancellationToken ct = default);
+
+    Task<long> CountTelegramRecipientsAsync(CancellationToken ct = default);
 }
 
 /// <summary>

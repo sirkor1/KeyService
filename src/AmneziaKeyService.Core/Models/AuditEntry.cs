@@ -72,6 +72,7 @@ public static class AuditTargets
     public const string Key      = "key";
     public const string User     = "user";
     public const string PassCode = "passcode";
+    public const string Notification = "notification";
     public const string System   = "system";
 }
 

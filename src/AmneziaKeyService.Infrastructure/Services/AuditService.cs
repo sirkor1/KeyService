@@ -106,6 +106,9 @@ public static class AuditEvents
 
     public const string SettingsUpdated = "settings.updated";
 
+    public const string NotificationCreated  = "notification.created";
+    public const string NotificationCanceled = "notification.canceled";
+
     // ── Фоновая эксплуатация (фаза 5) ─────────────────────────────────────────
 
     public const string ServerWentOffline = "server.went_offline";

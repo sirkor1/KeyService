@@ -1,4 +1,5 @@
 using AmneziaKeyService.Bot.Services;
+using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.DependencyInjection;
 using AmneziaKeyService.Infrastructure.Events;
 using AmneziaKeyService.Infrastructure.Logging;
@@ -27,6 +28,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddAmneziaData(config);
         services.AddAmneziaMigrations();
         services.AddAmneziaProtocols();
+        services.Configure<NotificationOptions>(config.GetSection("Notifications"));
 
         // Клиент Telegram, диспетчер событий и обработчик уведомления
         // регистрируются вместе и только при заданном токене.
@@ -39,6 +41,7 @@ var host = Host.CreateDefaultBuilder(args)
             services.AddSingleton<ITelegramBotClient>(_ => new TelegramBotClient(telegramToken));
             services.AddAmneziaEventProcessing(config);
             services.AddScoped<IDomainEventHandler, KeyIssuedNotificationHandler>();
+            services.AddHostedService<NotificationDispatcher>();
         }
 
         // Схему правит worker. Бот дожидается, а не мигрирует сам:

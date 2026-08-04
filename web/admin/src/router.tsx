@@ -11,6 +11,7 @@ import { ServersPage } from '@/pages/ServersPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { UsersPage } from '@/pages/UsersPage';
 import { PassCodesPage } from '@/pages/PassCodesPage';
+import { NotificationsPage } from '@/pages/NotificationsPage';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
 
       { path: 'users', element: <UsersPage /> },
       { path: 'passcodes', element: <PassCodesPage /> },
+      { path: 'notifications', element: <NotificationsPage /> },
       { path: 'logs', element: <LogsPage /> },
       { path: 'settings', element: <SettingsPage /> },
 

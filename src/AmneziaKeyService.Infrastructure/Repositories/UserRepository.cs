@@ -108,4 +108,19 @@ public class UserRepository : IUserRepository
 
     public Task<long> CountAsync(CancellationToken ct = default)
         => _collection.CountDocumentsAsync(FilterDefinition<User>.Empty, cancellationToken: ct);
+
+    public Task<List<User>> GetTelegramRecipientsAsync(CancellationToken ct = default)
+        => _collection.Find(TelegramRecipientsFilter()).SortBy(x => x.Id).ToListAsync(ct);
+
+    public Task<long> CountTelegramRecipientsAsync(CancellationToken ct = default)
+        => _collection.CountDocumentsAsync(TelegramRecipientsFilter(), cancellationToken: ct);
+
+    private static FilterDefinition<User> TelegramRecipientsFilter()
+    {
+        var b = Builders<User>.Filter;
+        return b.And(
+            b.Eq(x => x.IsActive, true),
+            b.Eq(x => x.Status, UserStatuses.Active),
+            b.Ne(x => x.TelegramId, null));
+    }
 }
