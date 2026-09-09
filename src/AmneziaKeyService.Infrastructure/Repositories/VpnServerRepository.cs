@@ -81,10 +81,67 @@ public class VpnServerRepository : IVpnServerRepository
     public async Task<bool> UpdateAsync(VpnServer server, CancellationToken ct = default)
     {
         server.UpdatedAt = DateTime.UtcNow;
-        var result = await _collection.ReplaceOneAsync(
-            Builders<VpnServer>.Filter.Eq(x => x.Id, server.Id), server, cancellationToken: ct);
+        var fields = server.ToBsonDocument();
+        fields.Remove("_id");
+        fields.Remove("disabledProtocolIds");
+        var result = await _collection.UpdateOneAsync(
+            x => x.Id == server.Id, new BsonDocument("$set", fields), cancellationToken: ct);
         return result.MatchedCount > 0;
     }
+
+    public async Task<bool> SetProtocolEnabledAsync(string id, string protocolId, bool enabled, CancellationToken ct = default)
+    {
+        var update = enabled
+            ? Builders<VpnServer>.Update.Pull(x => x.DisabledProtocolIds, protocolId)
+            : Builders<VpnServer>.Update.AddToSet(x => x.DisabledProtocolIds, protocolId);
+        // Also support records whose original Enabled flag was false.
+        update = update.Set("protocols.$.enabled", true).Set(x => x.UpdatedAt, DateTime.UtcNow);
+        var result = await _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            update, cancellationToken: ct);
+        return result.MatchedCount > 0;
+    }
+
+    public async Task UpdateHealthAsync(VpnServer server, CancellationToken ct = default)
+    {
+        await _collection.UpdateOneAsync(x => x.Id == server.Id,
+            Builders<VpnServer>.Update.Set(x => x.Health, server.Health), cancellationToken: ct);
+        // Never overwrite an installation's setup/error state with a stale probe.
+        if (server.Status is ServerStatuses.Ok or ServerStatuses.Offline)
+            await _collection.UpdateOneAsync(x => x.Id == server.Id &&
+                (x.Status == ServerStatuses.Ok || x.Status == ServerStatuses.Offline),
+                Builders<VpnServer>.Update.Set(x => x.Status, server.Status), cancellationToken: ct);
+    }
+
+    public Task UpdateInstallationAsync(VpnServer server, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(x => x.Id == server.Id,
+            Builders<VpnServer>.Update.Set(x => x.Protocols, server.Protocols)
+                .Set(x => x.DefaultProtocolId, server.DefaultProtocolId)
+                .Set(x => x.Status, server.Status)
+                .Set("ssh.hostFingerprint", server.Ssh.HostFingerprint)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+
+    public Task UpdateMetadataAsync(VpnServer server, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(x => x.Id == server.Id,
+            Builders<VpnServer>.Update.Set(x => x.Host, server.Host).Set(x => x.Name, server.Name)
+                .Set(x => x.Geo, server.Geo).Set(x => x.Provider, server.Provider)
+                .Set(x => x.Note, server.Note).Set(x => x.KeyLimit, server.KeyLimit)
+                .Set(x => x.Dns1, server.Dns1).Set(x => x.Dns2, server.Dns2)
+                .Set("ssh.port", server.Ssh.Port).Set("ssh.user", server.Ssh.User)
+                .Set("ssh.authType", server.Ssh.AuthType).Set("ssh.password", server.Ssh.Password)
+                .Set("ssh.privateKeyPath", server.Ssh.PrivateKeyPath)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+
+    public Task UpdateReconciliationAsync(VpnServer server, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(x => x.Id == server.Id,
+            Builders<VpnServer>.Update.Set(x => x.OrphanPeerCount, server.OrphanPeerCount)
+                .Set(x => x.ReconciledAt, server.ReconciledAt), cancellationToken: ct);
+
+    public Task UpdateProtocolParamsAsync(string id, ProtocolInstance protocol, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocol.Id),
+            Builders<VpnServer>.Update.Set("protocols.$.wg", protocol.Wg)
+                .Set("protocols.$.xray", protocol.Xray).Set("protocols.$.lastSyncedAt", protocol.LastSyncedAt), cancellationToken: ct);
 
     public async Task<bool> DeleteAsync(string id, CancellationToken ct = default)
     {

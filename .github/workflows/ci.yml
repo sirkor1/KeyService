@@ -54,6 +54,11 @@ jobs:
       - name: Verify user-management invariants
         run: dotnet run --project tools/VerifyUserManagement/VerifyUserManagement.csproj --configuration Release
 
+      - name: Verify protocol upgrades and IP allocation
+        run: |
+          dotnet run --project tools/VerifyProtocols --configuration Release
+          dotnet run --project tools/VerifyIpAllocation --configuration Release
+
   event-bus:
     name: Mongo event bus integration
     runs-on: ubuntu-24.04
@@ -90,6 +95,9 @@ jobs:
         env:
           MONGO_URL: mongodb://127.0.0.1:27017
         run: dotnet run --project tools/VerifyLegacyMigration/VerifyLegacyMigration.csproj --configuration Release
+
+      - name: Verify protocol availability persistence
+        run: dotnet run --project tools/VerifyProtocols --configuration Release -- --mongo=mongodb://127.0.0.1:27017
 
   frontend:
     name: Frontend checks

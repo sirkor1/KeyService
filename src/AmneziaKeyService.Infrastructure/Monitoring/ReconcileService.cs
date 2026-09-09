@@ -45,8 +45,7 @@ public class ReconcileService : PeriodicWorker
 
     /// <summary>Протокол, у которого список peer-ов вообще можно получить.</summary>
     private static bool IsReconcilable(ProtocolInstance p)
-        => p.Enabled
-           && p.State == ProtocolStates.Installed
+        => p.State == ProtocolStates.Installed
            && ProtocolKinds.IsWireGuardFamily(p.Kind)
            && p.Wg is not null;
 
@@ -102,7 +101,7 @@ public class ReconcileService : PeriodicWorker
         server.OrphanPeerCount = orphans.Count;
         server.ReconciledAt    = DateTime.UtcNow;
 
-        await services.GetRequiredService<IVpnServerRepository>().UpdateAsync(server, ct);
+        await services.GetRequiredService<IVpnServerRepository>().UpdateReconciliationAsync(server, ct);
 
         if (orphans.Count == 0)
         {

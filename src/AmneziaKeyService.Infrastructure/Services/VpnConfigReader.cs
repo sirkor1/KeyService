@@ -54,7 +54,7 @@ public class VpnConfigReader : IVpnConfigReader
             ["description"]      = server.Name,
             ["dns1"]             = server.Dns1,
             ["dns2"]             = server.Dns2,
-            ["defaultContainer"] = protocol.ContainerName,
+            ["defaultContainer"] = protocol.Kind == ProtocolKinds.Awg3 ? "amnezia-awg2" : protocol.ContainerName,
             ["containers"]       = new JsonArray(
                 configurator.BuildContainerEntry(server, protocol, client)),
         };

@@ -56,6 +56,31 @@ public static class ScriptVars
         vars["SPECIAL_JUNK_5"]                 = obf.I5;
     }
 
+    public static void AddAwg3(Dictionary<string, string> vars, AwgObfuscationParams obf)
+    {
+        vars["HEADER_PROTECTION_KEY"] = obf.HeaderProtectionKey;
+        vars["CONTENT_PADDING_ADDITION"] = obf.ContentPaddingAddition;
+        vars["REKEY_AFTER_TIME"] = obf.RekeyAfterTime;
+        vars["REKEY_TIMEOUT"] = obf.RekeyTimeout;
+        vars["REJECT_AFTER_TIME"] = obf.RejectAfterTime;
+        vars["KEEPALIVE_TIMEOUT"] = obf.KeepaliveTimeout;
+        vars["MAX_HANDSHAKE_ATTEMPTS"] = obf.MaxHandshakeAttempts;
+        vars["RANDOM_TRAILERS"] = obf.RandomTrailers;
+        vars["DISABLE_COOKIES"] = obf.DisableCookies;
+        vars["PERSISTENT_KEEPALIVE"] = "25-35";
+    }
+
+    public static AwgObfuscationParams Awg3Obfuscation() => new()
+    {
+        Jc = Random.Shared.Next(4, 7).ToString(), Jmin = "10", Jmax = "50",
+        S1 = "12", S2 = "12", S3 = "12", S4 = "12",
+        H1 = "1", H2 = "2", H3 = "3", H4 = "4",
+        HeaderProtectionKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+        RekeyAfterTime = "100-120", RekeyTimeout = "3-7", RejectAfterTime = "150-180",
+        KeepaliveTimeout = "5-15", MaxHandshakeAttempts = "15-20",
+        RandomTrailers = "on", DisableCookies = "on",
+    };
+
     /// <summary>Переменные Xray.</summary>
     public static void AddXray(Dictionary<string, string> vars, string port, string siteName)
     {

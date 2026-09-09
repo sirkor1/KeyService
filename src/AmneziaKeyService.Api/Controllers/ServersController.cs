@@ -229,6 +229,22 @@ public class ServersController : ControllerBase
         return Accepted(new JobAcceptedDto(id, job.Id));
     }
 
+    /// <summary>Доступность новых ключей; контейнер и существующие ключи сохраняются.</summary>
+    [HttpPut("{id}/protocols/{protocolId}/availability")]
+    public async Task<IActionResult> SetProtocolAvailability(string id, string protocolId,
+        [FromBody] ProtocolAvailabilityRequest request, CancellationToken ct)
+    {
+        var server = await _servers.GetByIdAsync(id, ct) ?? throw new NotFoundException("Сервер не найден.");
+        var protocol = server.FindProtocol(protocolId) ?? throw new NotFoundException("Протокол не найден.");
+        if (request.Enabled && protocol.State != ProtocolStates.Installed)
+            throw new BadRequestException("Сначала завершите установку протокола.");
+        if (!await _servers.SetProtocolEnabledAsync(id, protocolId, request.Enabled, ct))
+            throw new NotFoundException("Протокол не найден.");
+        await _audit.WriteAsync("protocol.availability", $"{protocol.DisplayNameOrKind()}: выдача новых ключей " +
+            (request.Enabled ? "включена" : "выключена"), User, AuditTargets.Server, id, server.Name, ct: ct);
+        return NoContent();
+    }
+
     /// <summary>Удаляет протокол с узла вместе с контейнером.</summary>
     [HttpDelete("{id}/protocols/{protocolId}")]
     [ProducesResponseType(typeof(JobAcceptedDto), StatusCodes.Status202Accepted)]
@@ -340,7 +356,7 @@ public class ServersController : ControllerBase
             server.Ssh.AuthType       = SshAuthTypes.PrivateKey;
         }
 
-        await _servers.UpdateAsync(server, ct);
+        await _servers.UpdateMetadataAsync(server, ct);
 
         await _audit.WriteAsync(AuditEvents.ServerUpdated,
             $"Изменены параметры узла «{server.Name}»",
@@ -489,3 +505,5 @@ public class ServersController : ControllerBase
         return users.ToDictionary(u => u.Id, u => u.DisplayName ?? u.Username);
     }
 }
+
+public record ProtocolAvailabilityRequest(bool Enabled);

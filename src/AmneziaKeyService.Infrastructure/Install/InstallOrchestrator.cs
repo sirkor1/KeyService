@@ -62,8 +62,10 @@ public partial class InstallOrchestrator
             return;
         }
 
+        var previousStatus = server.Status;
         try
         {
+            if (job.Kind != InstallJobKinds.RemoveProtocol) ProtocolInstallRules.Prepare(server, job.Spec);
             await using var ssh = await StepAsync(job, InstallStepCodes.Ssh, progress, ct,
                 () => ConnectAsync(server, progress, ct));
 
@@ -83,7 +85,7 @@ public partial class InstallOrchestrator
                 () => VerifyAsync(ssh, server, installed, progress, ct));
 
             server.Status = ServerStatuses.Ok;
-            await _servers.UpdateAsync(server, ct);
+            await _servers.UpdateInstallationAsync(server, ct);
 
             job.Status          = InstallJobStatuses.Succeeded;
             job.ProgressPercent = 100;
@@ -111,8 +113,9 @@ public partial class InstallOrchestrator
             await MarkCurrentStepFailedAsync(job, message);
             await FailAsync(job, message, CancellationToken.None);
 
-            server.Status = ServerStatuses.Error;
-            await _servers.UpdateAsync(server, CancellationToken.None);
+            server.Status = job.Kind == InstallJobKinds.AddProtocol ? previousStatus : ServerStatuses.Error;
+            foreach (var p in server.Protocols.Where(p => p.State == ProtocolStates.Installing)) p.State = ProtocolStates.Failed;
+            await _servers.UpdateInstallationAsync(server, CancellationToken.None);
         }
     }
 
@@ -166,7 +169,7 @@ public partial class InstallOrchestrator
         if (string.IsNullOrEmpty(server.Ssh.HostFingerprint))
         {
             server.Ssh.HostFingerprint = fingerprint;
-            await _servers.UpdateAsync(server, ct);
+            await _servers.UpdateInstallationAsync(server, ct);
             await progress.DetailAsync($"Отпечаток зафиксирован: {fingerprint}", ct);
             return;
         }
@@ -189,8 +192,10 @@ public partial class InstallOrchestrator
         await WaitForPackageManagerAsync(ssh, progress, ct);
 
         await progress.DetailAsync("Установка Docker и зависимостей", ct);
-        var output = await ssh.RunHostScriptAsync(
-            _scripts.Read("shared/install_docker.sh"), "install_docker", ct);
+        var docker = await ssh.RunAsync("sudo docker info >/dev/null 2>&1", ct);
+        var output = docker.Ok
+            ? (await ssh.RunAsync("uname -sr", ct)).StdOut
+            : await ssh.RunHostScriptAsync(_scripts.Read("shared/install_docker.sh"), "install_docker", ct);
         await progress.LogAsync(output, ct: ct);
 
         // Ядро проверяем по выводу install_docker.sh — он заканчивается uname -sr.
@@ -258,7 +263,9 @@ public partial class InstallOrchestrator
         foreach (var spec in job.Spec.Where(s => s.Port is not null))
         {
             var result = await ssh.RunAsync(
-                $"sudo lsof -i -P -n | grep -E ':{spec.Port}\\b' | grep -i LISTEN", ct);
+                $"sudo ss -H -lntu 'sport = :{spec.Port}'", ct);
+
+            if (!result.Ok) throw new BadRequestException("Не удалось проверить занятость порта на узле.");
 
             // grep без совпадений возвращает 1 — это и есть «порт свободен».
             if (result.Ok && !string.IsNullOrWhiteSpace(result.StdOut))
@@ -288,11 +295,11 @@ public partial class InstallOrchestrator
 
             // Сохраняем сразу после каждого протокола: если следующий упадёт,
             // уже развёрнутый не потеряется и не станет «сиротой» на узле.
-            server.Protocols.RemoveAll(p => p.ContainerName == protocol.ContainerName);
+            protocol.State = ProtocolStates.Installing;
             server.Protocols.Add(protocol);
             server.DefaultProtocolId ??= protocol.Id;
 
-            await _servers.UpdateAsync(server, ct);
+            await _servers.UpdateInstallationAsync(server, ct);
             installed.Add(protocol);
         }
 
@@ -324,7 +331,7 @@ public partial class InstallOrchestrator
             await configurator.EnsureServerParamsAsync(ssh, server, protocol, ct);
         }
 
-        await _servers.UpdateAsync(server, ct);
+        await _servers.UpdateInstallationAsync(server, ct);
     }
 
     /// <summary>Проверка, что контейнеры действительно работают.</summary>
@@ -349,6 +356,19 @@ public partial class InstallOrchestrator
                     "Посмотрите его логи на узле: docker logs " + protocol.ContainerName);
             }
 
+            if (protocol.Wg is { } wg)
+            {
+                // start.sh is launched with docker exec -d; wait for the actual interface.
+                var ready = false;
+                for (var attempt = 0; attempt < 10; attempt++)
+                {
+                    var probe = await ssh.RunAsync($"sudo docker exec {protocol.ContainerName} {wg.Binary} show {wg.InterfaceName}", ct);
+                    if (probe.Ok) { ready = true; break; }
+                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
+                }
+                if (!ready) throw new BadRequestException("Интерфейс VPN не запустился. Проверьте поддержку параметров протокола и журнал контейнера.");
+            }
+            protocol.State = ProtocolStates.Installed;
             var version = await ReadContainerVersionAsync(ssh, protocol, ct);
             if (version is not null)
             {
@@ -357,7 +377,7 @@ public partial class InstallOrchestrator
             }
         }
 
-        await _servers.UpdateAsync(server, ct);
+        await _servers.UpdateInstallationAsync(server, ct);
     }
 
     private static async Task<string?> ReadContainerVersionAsync(
@@ -458,7 +478,8 @@ public partial class InstallOrchestrator
         await progress.LogAsync(
             "Установка отменена оператором.", AuditLevels.Warn, CancellationToken.None);
 
-        server.Status = ServerStatuses.Error;
-        await _servers.UpdateAsync(server, CancellationToken.None);
+        if (job.Kind != InstallJobKinds.AddProtocol) server.Status = ServerStatuses.Error;
+        foreach (var p in server.Protocols.Where(p => p.State == ProtocolStates.Installing)) p.State = ProtocolStates.Failed;
+        await _servers.UpdateInstallationAsync(server, CancellationToken.None);
     }
 }

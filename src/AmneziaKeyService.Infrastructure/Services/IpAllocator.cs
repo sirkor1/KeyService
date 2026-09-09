@@ -12,9 +12,10 @@ namespace AmneziaKeyService.Infrastructure.Services;
 /// исчерпывалась навсегда после ~250 выдач, даже если активных ключей оставалось
 /// двое.
 ///
-/// Занятыми считаются адреса неотозванных ключей плюс весь диапазон до
-/// lastKnownPeerIp: на узле есть peer-ы, заведённые мимо сервиса (у боевого
-/// узла их 13), и пересечение с ними ломает обе стороны.
+/// Занятыми считаются адреса неотозванных ключей плюс адреса из актуальных
+/// AllowedIPs peer-ов на узле. Серверный конфиг читается перед каждой выдачей:
+/// это защищает от пересечений с peer-ами, заведёнными мимо сервиса, но не
+/// мешает переиспользовать адреса действительно удалённых peer-ов.
 ///
 /// Аллокатор не гарантирует уникальность сам по себе — гонку закрывает
 /// частичный уникальный индекс из миграции 006, а вызывающий повторяет
@@ -27,13 +28,29 @@ public class IpAllocator
     public IpAllocator(IVpnClientRepository clients) => _clients = clients;
 
     public async Task<string> AllocateAsync(
-        VpnServer server, ProtocolInstance protocol, CancellationToken ct = default)
+        VpnServer server,
+        ProtocolInstance protocol,
+        IEnumerable<string> serverAllowedIps,
+        CancellationToken ct = default)
     {
         var wg = protocol.Wg
             ?? throw new InvalidOperationException(
                 $"Протокол {protocol.Kind} не использует туннельные адреса.");
 
-        var taken = await LoadTakenAsync(server.Id, protocol.Id, wg, ct);
+        var assigned = await _clients.GetAssignedIpsAsync(server.Id, protocol.Id, ct);
+        return SelectAvailableIp(wg, assigned, serverAllowedIps);
+    }
+
+    internal static string SelectAvailableIp(
+        WgProtocolParams wg,
+        IEnumerable<string> assignedIps,
+        IEnumerable<string> serverAllowedIps)
+    {
+        var taken = new HashSet<uint>(assignedIps.Select(ToUInt32));
+        var serverRanges = serverAllowedIps
+            .Select(ParseRange)
+            .OfType<IpRange>()
+            .ToArray();
         var (network, broadcast) = SubnetRange(wg);
 
         // network + 1 — сам сервер, клиентам достаётся со второго адреса.
@@ -44,7 +61,8 @@ public class IpAllocator
             var lastOctet = candidate & 0xFF;
             if (lastOctet is 0 or 255) continue;
 
-            if (!taken.Contains(candidate)) return ToIp(candidate);
+            if (!taken.Contains(candidate) && !serverRanges.Any(x => x.Contains(candidate)))
+                return ToIp(candidate);
         }
 
         throw new InvalidOperationException(
@@ -52,22 +70,22 @@ public class IpAllocator
             "Отзовите неиспользуемые ключи или расширьте подсеть.");
     }
 
-    private async Task<HashSet<uint>> LoadTakenAsync(
-        string serverId, string protocolId, WgProtocolParams wg, CancellationToken ct)
+    private static IpRange? ParseRange(string allowedIp)
     {
-        var assigned = await _clients.GetAssignedIpsAsync(serverId, protocolId, ct);
-        var taken = new HashSet<uint>(assigned.Select(ToUInt32));
+        var parts = allowedIp.Trim().Split('/', 2);
+        if (!IPAddress.TryParse(parts[0], out var address) ||
+            address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+            return null;
 
-        if (wg.LastKnownPeerIp is { } last && IPAddress.TryParse(last, out _))
-        {
-            var boundary = ToUInt32(last);
-            var (network, _) = SubnetRange(wg);
+        var prefix = 32;
+        if (parts.Length == 2 &&
+            (!int.TryParse(parts[1], out prefix) || prefix is < 0 or > 32))
+            return null;
 
-            for (var addr = network + 1; addr <= boundary; addr++)
-                taken.Add(addr);
-        }
-
-        return taken;
+        var value = ToUInt32(address.ToString());
+        var mask = prefix == 0 ? 0u : uint.MaxValue << (32 - prefix);
+        var network = value & mask;
+        return new IpRange(network, network | ~mask);
     }
 
     private static (uint Network, uint Broadcast) SubnetRange(WgProtocolParams wg)
@@ -98,5 +116,10 @@ public class IpAllocator
         var bytes = BitConverter.GetBytes(value);
         if (BitConverter.IsLittleEndian) Array.Reverse(bytes);
         return new IPAddress(bytes).ToString();
+    }
+
+    private readonly record struct IpRange(uint First, uint Last)
+    {
+        public bool Contains(uint address) => address >= First && address <= Last;
     }
 }

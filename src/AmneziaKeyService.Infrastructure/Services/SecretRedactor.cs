@@ -19,7 +19,7 @@ public static partial class SecretRedactor
     private static partial Regex PemBlock();
 
     /// <summary>Присваивания ключей в конфигах WireGuard/AWG: PrivateKey = ..., PresharedKey = ...</summary>
-    [GeneratedRegex(@"\b(PrivateKey|PresharedKey|PublicKey|Password|passwd)\b\s*[=:]\s*\S+",
+    [GeneratedRegex(@"\b(HeaderProtectionKey|PrivateKey|PresharedKey|PublicKey|Password|passwd)\b\s*[=:]\s*\S+",
         RegexOptions.IgnoreCase)]
     private static partial Regex KeyAssignment();
 

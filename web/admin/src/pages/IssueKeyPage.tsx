@@ -51,12 +51,12 @@ export function IssueKeyPage() {
   );
 
   const selectedServer = available.find((s) => s.id === serverId);
-  const protocolOptions = (selectedServer?.protocols ?? []).map((p) => ({
+  const protocolOptions = (selectedServer?.protocols ?? []).filter((p) => p.enabled && p.state === 'installed').map((p) => ({
     value: p.id,
     label: p.displayName,
   }));
 
-  const effectiveProtocolId = protocolId || protocolOptions[0]?.value || '';
+  const effectiveProtocolId = (protocolOptions.some((p) => p.value === protocolId) ? protocolId : protocolOptions[0]?.value) || '';
 
   // Подсказка в поле квоты повторяет значение из настроек панели — то самое,
   // которое подставит бэкенд, если поле оставить пустым.
@@ -280,7 +280,7 @@ export function IssueKeyPage() {
             <Btn
               variant="primary"
               type="submit"
-              disabled={issue.isPending || !serverId || !ownerName.trim()}
+              disabled={issue.isPending || !serverId || !effectiveProtocolId || !ownerName.trim()}
             >
               {issue.isPending ? 'Создаём ключ…' : 'Создать ключ'}
             </Btn>

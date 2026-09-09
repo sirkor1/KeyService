@@ -49,6 +49,10 @@ export interface ServerListParams extends ListParams {
 }
 
 export const servers = {
+  addProtocol: (id: string, body: ProtocolSpecBody) => api.post<JobAccepted>(`/servers/${id}/protocols`, body),
+  setProtocolEnabled: (id: string, protocolId: string, enabled: boolean) =>
+    api.put<void>(`/servers/${id}/protocols/${protocolId}/availability`, { enabled }),
+
   list: (params: ServerListParams = {}) =>
     api.get<Paged<ServerListItem>>('/servers', { ...params }),
 

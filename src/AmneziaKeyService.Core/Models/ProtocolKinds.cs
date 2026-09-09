@@ -7,6 +7,8 @@ namespace AmneziaKeyService.Core.Models;
 public static class ProtocolKinds
 {
     /// <summary>AmneziaWG актуальной версии, контейнер amnezia-awg2, бинарь awg.</summary>
+    public const string Awg3 = "awg3";
+
     public const string Awg2 = "awg2";
 
     /// <summary>AmneziaWG legacy, контейнер amnezia-awg, бинарь wg.</summary>
@@ -18,18 +20,19 @@ public static class ProtocolKinds
     /// <summary>VLESS Reality на Xray-core, контейнер amnezia-xray.</summary>
     public const string Xray = "xray";
 
-    public static readonly string[] All = [Awg2, AwgLegacy, WireGuard, Xray];
+    public static readonly string[] All = [Awg3, Awg2, AwgLegacy, WireGuard, Xray];
 
     /// <summary>Семейство WireGuard: общий формат конфига, peer-ы и чтение статистики.</summary>
-    public static readonly string[] WireGuardFamily = [Awg2, AwgLegacy, WireGuard];
+    public static readonly string[] WireGuardFamily = [Awg3, Awg2, AwgLegacy, WireGuard];
 
     public static bool IsWireGuardFamily(string kind) => WireGuardFamily.Contains(kind);
 
     /// <summary>Название для интерфейса — как в макете панели.</summary>
     public static string DisplayName(string kind) => kind switch
     {
-        Awg2      => "AmneziaWG",
-        AwgLegacy => "AmneziaWG",
+        Awg3      => "AmneziaWG 3.1",
+        Awg2      => "AmneziaWG 2.0",
+        AwgLegacy => "AmneziaWG 1.0",
         WireGuard => "WireGuard",
         Xray      => "VLESS Reality",
         _         => kind
@@ -38,6 +41,7 @@ public static class ProtocolKinds
     /// <summary>Имя docker-контейнера по умолчанию.</summary>
     public static string DefaultContainerName(string kind) => kind switch
     {
+        Awg3      => "amnezia-awg3",
         Awg2      => "amnezia-awg2",
         AwgLegacy => "amnezia-awg",
         WireGuard => "amnezia-wireguard",

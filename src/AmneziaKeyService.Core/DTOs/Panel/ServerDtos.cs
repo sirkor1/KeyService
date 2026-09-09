@@ -25,7 +25,7 @@ public record ServerListItemDto(
         server.Provider,
         server.Ssh.Port,
         server.Ssh.AuthType,
-        [.. server.Protocols.Select(ProtocolSummaryDto.From)],
+        [.. server.Protocols.Select(p => ProtocolSummaryDto.From(p) with { Enabled = server.CanIssue(p) })],
         keysCount,
         server.Health?.LoadPercent,
         trafficBytes,
@@ -33,10 +33,10 @@ public record ServerListItemDto(
 }
 
 /// <summary>Протокол в свёрнутом виде — колонка «Протоколы».</summary>
-public record ProtocolSummaryDto(string Id, string Kind, string DisplayName, string Port, string State)
+public record ProtocolSummaryDto(string Id, string Kind, string DisplayName, string Port, string State, bool Enabled)
 {
     public static ProtocolSummaryDto From(ProtocolInstance p) => new(
-        p.Id, p.Kind, ProtocolKinds.DisplayName(p.Kind), p.Port, p.State);
+        p.Id, p.Kind, ProtocolKinds.DisplayName(p.Kind), p.Port, p.State, p.Enabled);
 }
 
 /// <summary>Экран деталей узла.</summary>
@@ -65,7 +65,7 @@ public record ServerDetailDto(
         s.Id, s.Name, s.Host, s.Geo, s.Provider, s.Note, s.KeyLimit, s.Status,
         s.Dns1, s.Dns2,
         SshInfoDto.From(s.Ssh),
-        [.. s.Protocols.Select(ProtocolDetailDto.From)],
+        [.. s.Protocols.Select(p => ProtocolDetailDto.From(p) with { Enabled = s.CanIssue(p) })],
         s.DefaultProtocolId,
         s.Health is null ? null : ServerHealthDto.From(s.Health),
         kpi,

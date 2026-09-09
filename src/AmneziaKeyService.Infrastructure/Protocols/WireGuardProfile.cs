@@ -21,6 +21,9 @@ public record WireGuardProfile(
     /// <summary>Значение protocol_version в конфиге. Null — поле не добавляется.</summary>
     string? ProtocolVersion)
 {
+    public static readonly WireGuardProfile Awg3 = new(
+        ProtocolKinds.Awg3, "awg3", "awg", true, true, "3.1");
+
     public static readonly WireGuardProfile Awg2 = new(
         Kind: ProtocolKinds.Awg2,
         TemplateFolder: "awg",
@@ -47,6 +50,7 @@ public record WireGuardProfile(
 
     public static WireGuardProfile For(string kind) => kind switch
     {
+        ProtocolKinds.Awg3      => Awg3,
         ProtocolKinds.Awg2      => Awg2,
         ProtocolKinds.AwgLegacy => AwgLegacy,
         ProtocolKinds.WireGuard => WireGuard,

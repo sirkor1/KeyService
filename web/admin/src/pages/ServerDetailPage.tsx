@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ProtocolInstallPanel } from './ProtocolInstallPanel';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/auth/AuthProvider';
@@ -68,7 +69,16 @@ const keyColumns: Column<KeyListItem>[] = [
   },
 ];
 
-function ProtocolCard({ protocol }: { protocol: ProtocolDetail }) {
+function ProtocolCard({ protocol, serverId }: { protocol: ProtocolDetail; serverId: string }) {
+  const { can } = useAuth();
+  const queryClient = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: () => servers.setProtocolEnabled(serverId, protocol.id, !protocol.enabled),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: qk.serverDetail(serverId) });
+      await queryClient.invalidateQueries({ queryKey: qk.servers });
+    },
+  });
   const meta = protocol.xray
     ? joinMeta(
         `порт ${protocol.port}/${protocol.transportProto}`,
@@ -92,6 +102,15 @@ function ProtocolCard({ protocol }: { protocol: ProtocolDetail }) {
       </div>
 
       <div className={styles.protocolMeta}>{meta}</div>
+      <div className={styles.protocolHead}>
+        <Tag tone="outline">{protocol.enabled ? 'Выдача ключей включена' : 'Новые ключи не выдаются'}</Tag>
+        {can('panel:admin') && protocol.state === 'installed' && (
+          <Btn variant="ghost" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
+            {protocol.enabled ? 'Отключить выдачу' : 'Включить выдачу'}
+          </Btn>
+        )}
+      </div>
+      {toggle.isError && <ErrorBanner message={toggle.error instanceof ApiError ? toggle.error.message : 'Не удалось изменить доступность.'} />}
 
       <div className={cx(styles.protocolContainer, 'mono')}>
         {joinMeta(protocol.containerName, protocol.containerVersion)}
@@ -224,9 +243,11 @@ export function ServerDetailPage() {
         <section>
           <SectionTitle>Протоколы и контейнеры</SectionTitle>
 
+          <ProtocolInstallPanel server={s} />
+          <p className={styles.footnote}>Отключение выдачи сохраняет работу существующих ключей и мониторинг протокола.</p>
           <div className={styles.protocols}>
             {s.protocols.map((protocol) => (
-              <ProtocolCard key={protocol.id} protocol={protocol} />
+              <ProtocolCard key={protocol.id} protocol={protocol} serverId={s.id} />
             ))}
           </div>
         </section>

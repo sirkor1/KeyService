@@ -17,6 +17,13 @@ public interface IVpnServerRepository
 
     Task<bool> UpdateAsync(VpnServer server, CancellationToken ct = default);
 
+    Task<bool> SetProtocolEnabledAsync(string id, string protocolId, bool enabled, CancellationToken ct = default);
+    Task UpdateInstallationAsync(VpnServer server, CancellationToken ct = default);
+    Task UpdateMetadataAsync(VpnServer server, CancellationToken ct = default);
+    Task UpdateHealthAsync(VpnServer server, CancellationToken ct = default);
+    Task UpdateReconciliationAsync(VpnServer server, CancellationToken ct = default);
+    Task UpdateProtocolParamsAsync(string id, ProtocolInstance protocol, CancellationToken ct = default);
+
     Task<bool> DeleteAsync(string id, CancellationToken ct = default);
 
     /// <summary>Количество узлов в разрезе статусов — для плитки «Узлы онлайн».</summary>

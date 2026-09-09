@@ -127,7 +127,8 @@ public class VpnConfigService : IVpnConfigService
         var server = await _servers.GetByIdAsync(serverId, ct)
             ?? throw new NotFoundException($"Сервер '{serverId}' не найден.");
 
-        var protocol = VpnConfigReader.ResolveProtocol(server, options.ProtocolId);
+        var protocol = server.IssuanceProtocol(options.ProtocolId)
+            ?? throw new BadRequestException("Протокол недоступен для выдачи новых ключей.");
         var configurator = _protocols.GetConfigurator(protocol.Kind);
 
         var client = new VpnClient
@@ -177,7 +178,7 @@ public class VpnConfigService : IVpnConfigService
         }
 
         // Могли вычитаться параметры узла и сдвинуться граница адресов.
-        await _servers.UpdateAsync(server, ct);
+        await _servers.UpdateProtocolParamsAsync(server.Id, protocol, ct);
 
         await TryUpdateClientsTableAsync(ssh, server, protocol, client, add: true, ct);
 
@@ -317,7 +318,7 @@ public class VpnConfigService : IVpnConfigService
     /// <summary>Каталог протокола на узле — как в ContainerProps::containerTypeToString.</summary>
     private static string ContainerTypeFolder(string kind) => kind switch
     {
-        ProtocolKinds.Awg2 or ProtocolKinds.AwgLegacy => "awg",
+        ProtocolKinds.Awg3 or ProtocolKinds.Awg2 or ProtocolKinds.AwgLegacy => "awg",
         ProtocolKinds.WireGuard                       => "wireguard",
         ProtocolKinds.Xray                            => "xray",
         _                                             => kind,

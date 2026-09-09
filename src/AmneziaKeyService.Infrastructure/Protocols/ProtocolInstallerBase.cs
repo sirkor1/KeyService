@@ -29,6 +29,9 @@ public abstract class ProtocolInstallerBase : IProtocolInstaller
     /// <summary>Имя docker-контейнера.</summary>
     protected abstract string ContainerName { get; }
 
+    /// <summary>Pin a verified engine without modifying the upstream Dockerfile resource.</summary>
+    protected virtual string? BaseImage => null;
+
     /// <summary>Готовит описание протокола и таблицу подстановок.</summary>
     protected abstract (ProtocolInstance Protocol, Dictionary<string, string> Vars) Prepare(
         VpnServer server, ProtocolSpec spec);
@@ -41,14 +44,15 @@ public abstract class ProtocolInstallerBase : IProtocolInstaller
         CancellationToken ct = default)
     {
         var (protocol, vars) = Prepare(server, spec);
+        var existing = await ssh.RunCheckedAsync("sudo docker ps -a --format '{{.Names}}'", "list_containers", ct);
+        if (existing.Split('\n').Any(name => name.Trim() == protocol.ContainerName))
+            throw new AmneziaKeyService.Core.Exceptions.BadRequestException(
+                "Контейнер уже существует. Установка остановлена, существующие ключи сохранены.");
 
         await progress.DetailAsync($"Подготовка узла для {protocol.ContainerName}", ct);
         await RunSharedAsync(ssh, "prepare_host.sh", vars, "prepare_host", progress, ct);
 
-        // Прошлый контейнер с тем же именем убираем: скрипт upstream делает
-        // то же самое, и его падение при отсутствии контейнера ожидаемо.
-        await progress.DetailAsync("Удаление прежнего контейнера, если он был", ct);
-        await TryRunSharedAsync(ssh, "remove_container.sh", vars, progress, ct);
+
 
         await progress.DetailAsync($"Сборка образа {protocol.ContainerName} — это занимает минуты", ct);
         await UploadDockerfileAsync(ssh, vars, progress, ct);
@@ -92,6 +96,8 @@ public abstract class ProtocolInstallerBase : IProtocolInstaller
 
         var dockerfile = ScriptTemplateRenderer.Render(
             Scripts.Read($"{ScriptFolder}/Dockerfile"), vars);
+        if (BaseImage is { } image)
+            dockerfile = System.Text.RegularExpressions.Regex.Replace(dockerfile, @"\AFROM [^\r\n]+", $"FROM {image}");
 
         await progress.LogAsync($"Загружаю Dockerfile в {folder}", ct: ct);
         await ssh.WriteHostFileAsync($"{folder}/Dockerfile", dockerfile, ct);

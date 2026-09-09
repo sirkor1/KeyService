@@ -47,8 +47,7 @@ public class StatsPollerService : PeriodicWorker
 
     /// <summary>Протокол, с которого вообще можно снять счётчики.</summary>
     private static bool IsPollable(ProtocolInstance p)
-        => p.Enabled
-           && p.State == ProtocolStates.Installed
+        => p.State == ProtocolStates.Installed
            && ProtocolKinds.IsWireGuardFamily(p.Kind)
            && p.Wg is not null;
 

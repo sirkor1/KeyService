@@ -103,8 +103,8 @@ public partial class KeysController : ControllerBase
 
         // Протокол проверяем до создания владельца: иначе каждый запрос
         // с опечаткой в protocolId оставлял бы в базе мусорную учётку.
-        if (req.ProtocolId is not null && server.FindProtocol(req.ProtocolId) is null)
-            throw new NotFoundException($"Протокол '{req.ProtocolId}' на этом узле не найден.");
+        var selectedProtocol = server.IssuanceProtocol(req.ProtocolId)
+            ?? throw new BadRequestException("Протокол недоступен для выдачи новых ключей.");
 
         if (server.DefaultProtocol is null)
             throw new BadRequestException($"На узле «{server.Name}» не настроен ни один протокол.");
@@ -134,7 +134,7 @@ public partial class KeysController : ControllerBase
                 ServerId: req.ServerId,
                 OwnerUserId: owner.Id,
                 OwnerCreated: ownerCreated,
-                ProtocolId: req.ProtocolId,
+                ProtocolId: selectedProtocol.Id,
                 OwnerName: req.OwnerName ?? owner.DisplayName ?? owner.Username,
                 DeviceName: req.DeviceName,
                 Label: req.Label,

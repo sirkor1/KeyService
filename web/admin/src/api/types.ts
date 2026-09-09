@@ -60,11 +60,12 @@ export interface LoginResponse {
 // ── Серверы ────────────────────────────────────────────────────────────────
 
 export type ServerStatus = 'ok' | 'setup' | 'offline' | 'error';
-export type ProtocolKind = 'awg2' | 'awg' | 'wireguard' | 'xray';
+export type ProtocolKind = 'awg3' | 'awg2' | 'awg' | 'wireguard' | 'xray';
 export type ProtocolState = 'installed' | 'installing' | 'failed' | 'absent';
 export type SshAuthType = 'password' | 'privateKey' | 'agent';
 
 export interface ProtocolSummary {
+  enabled: boolean;
   id: string;
   kind: ProtocolKind;
   displayName: string;

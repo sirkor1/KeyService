@@ -8,6 +8,7 @@ namespace AmneziaKeyService.Infrastructure.Install;
 
 public partial class InstallService : IInstallService
 {
+    private readonly IVpnServerRepository _servers;
     private readonly IInstallJobRepository _jobs;
     private readonly IDomainEventPublisher _events;
     private readonly IProtocolInstallerRegistry _installers;
@@ -15,12 +16,14 @@ public partial class InstallService : IInstallService
     private readonly ScriptRegistry _scripts;
 
     public InstallService(
+        IVpnServerRepository servers,
         IInstallJobRepository jobs,
         IDomainEventPublisher events,
         IProtocolInstallerRegistry installers,
         ISshSessionFactory sshFactory,
         ScriptRegistry scripts)
     {
+        _servers = servers;
         _jobs       = jobs;
         _events     = events;
         _installers = installers;
@@ -40,6 +43,10 @@ public partial class InstallService : IInstallService
             if (!_installers.IsSupported(item.Kind))
                 throw new BadRequestException($"Установка протокола '{item.Kind}' не поддерживается.");
         }
+
+        if (kind != InstallJobKinds.RemoveProtocol)
+            ProtocolInstallRules.Prepare(await _servers.GetByIdAsync(serverId, ct)
+                ?? throw new NotFoundException("Сервер не найден."), spec);
 
         // Одновременно на узле может идти только одна установка: параллельные
         // docker build с одним именем контейнера затрут друг друга.

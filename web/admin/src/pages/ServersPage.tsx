@@ -16,7 +16,8 @@ import { serverStatus, sshAuthType } from '@/lib/labels';
 
 const PROTOCOL_TABS = [
   { value: '', label: 'Все' },
-  { value: 'awg2', label: 'AmneziaWG' },
+  { value: 'awg3', label: 'AmneziaWG 3.1' },
+  { value: 'awg2', label: 'AmneziaWG 2.0' },
   { value: 'wireguard', label: 'WireGuard' },
   { value: 'xray', label: 'VLESS Reality' },
 ];

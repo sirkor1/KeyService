@@ -66,6 +66,17 @@ public class VpnServer
     [BsonElement("protocols")]
     public List<ProtocolInstance> Protocols { get; set; } = [];
 
+    [BsonElement("disabledProtocolIds")]
+    public List<string> DisabledProtocolIds { get; set; } = [];
+
+    public bool CanIssue(ProtocolInstance protocol) => protocol.Enabled
+        && !DisabledProtocolIds.Contains(protocol.Id) && protocol.State == ProtocolStates.Installed;
+
+    public ProtocolInstance? IssuanceProtocol(string? protocolId) => protocolId is not null
+        ? Protocols.FirstOrDefault(p => p.Id == protocolId && CanIssue(p))
+        : Protocols.FirstOrDefault(p => p.Id == DefaultProtocolId && CanIssue(p))
+          ?? Protocols.FirstOrDefault(CanIssue);
+
     [BsonElement("health")]
     public ServerHealth? Health { get; set; }
 
@@ -255,7 +266,7 @@ public class WgProtocolParams
 
     /// <summary>
     /// Максимальный IP среди peer-ов в конфиге на момент последней синхронизации.
-    /// Нужен, чтобы не пересечься с peer-ами, заведёнными мимо сервиса.
+    /// Диагностический кэш; при выдаче занятые адреса читаются с узла заново.
     /// </summary>
     [BsonElement("lastKnownPeerIp")]
     public string? LastKnownPeerIp { get; set; }

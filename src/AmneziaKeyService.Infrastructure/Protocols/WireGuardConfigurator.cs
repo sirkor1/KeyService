@@ -52,7 +52,8 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
         ISshSession ssh, VpnServer server, ProtocolInstance protocol, CancellationToken ct = default)
     {
         var wg = RequireWg(protocol);
-        if (wg.ServerPubKey is not null && (!_profile.HasObfuscation || wg.Obfuscation is not null))
+        if (wg.ServerPubKey is not null && (!_profile.HasObfuscation || wg.Obfuscation is not null)
+            && (Kind != ProtocolKinds.Awg3 || !string.IsNullOrEmpty(wg.Obfuscation?.HeaderProtectionKey)))
             return false;
 
         wg.ServerPubKey = (await ssh.ReadContainerFileAsync(
@@ -88,7 +89,15 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
                 "На узле не найден pre-shared key. Перечитайте параметры узла.");
 
         var (privateKey, publicKey) = _keyGen.GenerateX25519KeyPair();
-        var clientIp = await _ipAllocator.AllocateAsync(server, protocol, ct);
+
+        // Конфиг читаем при каждой выдаче, а не полагаемся на сохранённую
+        // верхнюю границу: после отзыва peer-а освободившаяся «дыра» должна
+        // снова участвовать в распределении адресов.
+        var rawConf = await ssh.ReadContainerFileAsync(
+            protocol.ContainerName, wg.ServerConfigPath, ct);
+        var serverAllowedIps = ParsePeerAllowedIps(rawConf);
+        var clientIp = await _ipAllocator.AllocateAsync(
+            server, protocol, serverAllowedIps, ct);
 
         var peerBlock = new StringBuilder()
             .Append('\n').Append("[Peer]").Append('\n')
@@ -100,9 +109,10 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
         await ssh.AppendContainerFileAsync(protocol.ContainerName, wg.ServerConfigPath, peerBlock, ct);
         await SyncConfigAsync(ssh, protocol, wg, ct);
 
-        // Двигаем границу, чтобы следующий ключ не попал на тот же адрес,
-        // даже если запись клиента ещё не сохранена.
-        wg.LastKnownPeerIp = clientIp;
+        // Поле сохраняем для совместимости и диагностики. Аллокатор больше
+        // не использует его как границу занятого диапазона.
+        wg.LastKnownPeerIp = ParseMaxPeerIp(
+            $"{rawConf}\nAllowedIPs = {clientIp}/32") ?? clientIp;
 
         return new IssuedPeer
         {
@@ -203,6 +213,20 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
             lastConfig["I5"] = obf.I5;
         }
 
+        if (Kind == ProtocolKinds.Awg3)
+        {
+            lastConfig["HeaderProtectionKey"] = obf.HeaderProtectionKey;
+            lastConfig["ContentPaddingAddition"] = obf.ContentPaddingAddition;
+            lastConfig["RekeyAfterTime"] = obf.RekeyAfterTime;
+            lastConfig["RekeyTimeout"] = obf.RekeyTimeout;
+            lastConfig["RejectAfterTime"] = obf.RejectAfterTime;
+            lastConfig["KeepaliveTimeout"] = obf.KeepaliveTimeout;
+            lastConfig["MaxHandshakeAttempts"] = obf.MaxHandshakeAttempts;
+            lastConfig["RandomTrailers"] = obf.RandomTrailers;
+            lastConfig["DisableCookies"] = obf.DisableCookies;
+            lastConfig["persistent_keep_alive"] = "25-35";
+        }
+
         var protocolObj = new JsonObject
         {
             ["port"]            = protocol.Port,
@@ -241,12 +265,25 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
             protocolObj["i5"] = obf.I5;
         }
 
+        if (Kind == ProtocolKinds.Awg3)
+        {
+            protocolObj["HeaderProtectionKey"] = obf.HeaderProtectionKey;
+            protocolObj["ContentPaddingAddition"] = obf.ContentPaddingAddition;
+            protocolObj["RekeyAfterTime"] = obf.RekeyAfterTime;
+            protocolObj["RekeyTimeout"] = obf.RekeyTimeout;
+            protocolObj["RejectAfterTime"] = obf.RejectAfterTime;
+            protocolObj["KeepaliveTimeout"] = obf.KeepaliveTimeout;
+            protocolObj["MaxHandshakeAttempts"] = obf.MaxHandshakeAttempts;
+            protocolObj["RandomTrailers"] = obf.RandomTrailers;
+            protocolObj["DisableCookies"] = obf.DisableCookies;
+        }
+
         if (_profile.ProtocolVersion is { } version)
             protocolObj["protocol_version"] = version;
 
         return new JsonObject
         {
-            ["container"]        = protocol.ContainerName,
+            ["container"]        = Kind == ProtocolKinds.Awg3 ? "amnezia-awg2" : protocol.ContainerName,
             [_profile.ConfigKey] = protocolObj,
         };
     }
@@ -300,6 +337,8 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
             vars["SPECIAL_JUNK_5"]                 = obf.I5;
         }
 
+        if (Kind == ProtocolKinds.Awg3) ScriptVars.AddAwg3(vars, obf);
+
         var template = _scripts.Read($"{_profile.TemplateFolder}/template.conf");
         var rendered = ScriptTemplateRenderer.Render(template, vars);
 
@@ -327,7 +366,7 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
         string? Get(string key)
         {
             var match = Regex.Match(
-                conf, $@"^\s*{Regex.Escape(key)}\s*=\s*(.+)$",
+                conf, $@"^[ \t]*(?:#[ \t]*)?{Regex.Escape(key)}[ \t]*=[ \t]*(.*)$",
                 RegexOptions.Multiline | RegexOptions.IgnoreCase);
             return match.Success ? match.Groups[1].Value.Trim() : null;
         }
@@ -350,6 +389,16 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
         p.I3   = Get("I3")   ?? "";
         p.I4   = Get("I4")   ?? "";
         p.I5   = Get("I5")   ?? "";
+
+        p.HeaderProtectionKey = Get("HeaderProtectionKey") ?? "";
+        p.ContentPaddingAddition = Get("ContentPaddingAddition") ?? "";
+        p.RekeyAfterTime = Get("RekeyAfterTime") ?? "";
+        p.RekeyTimeout = Get("RekeyTimeout") ?? "";
+        p.RejectAfterTime = Get("RejectAfterTime") ?? "";
+        p.KeepaliveTimeout = Get("KeepaliveTimeout") ?? "";
+        p.MaxHandshakeAttempts = Get("MaxHandshakeAttempts") ?? "";
+        p.RandomTrailers = Get("RandomTrailers") ?? "";
+        p.DisableCookies = Get("DisableCookies") ?? "";
 
         return p;
     }
@@ -376,6 +425,19 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
 
         return maxIp;
     }
+
+    /// <summary>
+    /// Все IPv4 AllowedIPs из peer-блоков. Сохраняем CIDR: peer, добавленный
+    /// вручную с маршрутом шире /32, также должен защищать весь свой диапазон.
+    /// </summary>
+    internal static IReadOnlyCollection<string> ParsePeerAllowedIps(string conf)
+        => Regex.Matches(
+                conf, @"^\s*AllowedIPs\s*=\s*(.+)$",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase)
+            .SelectMany(match => match.Groups[1].Value.Split('#', 2)[0].Split(','))
+            .Select(value => value.Trim())
+            .Where(value => value.Length > 0)
+            .ToArray();
 
     private static WgProtocolParams RequireWg(ProtocolInstance protocol)
         => protocol.Wg

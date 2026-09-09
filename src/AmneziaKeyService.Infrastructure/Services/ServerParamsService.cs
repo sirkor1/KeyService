@@ -40,19 +40,13 @@ public class ServerParamsService : IServerParamsService
 
         await using var ssh = await _sshFactory.ConnectAsync(server, ct);
 
-        var changed = false;
         foreach (var protocol in pending)
         {
             if (force) ResetCache(protocol);
 
             var configurator = _protocols.GetConfigurator(protocol.Kind);
-            changed |= await configurator.EnsureServerParamsAsync(ssh, server, protocol, ct);
-        }
-
-        if (changed)
-        {
-            server.Status = ServerStatuses.Ok;
-            await _servers.UpdateAsync(server, ct);
+            await configurator.EnsureServerParamsAsync(ssh, server, protocol, ct);
+            await _servers.UpdateProtocolParamsAsync(server.Id, protocol, ct);
         }
 
         return server;

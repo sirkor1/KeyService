@@ -123,6 +123,9 @@ public static class AmneziaServiceCollectionExtensions
         // Семейство WireGuard обслуживает один конфигуратор, параметризованный
         // профилем: awg2, awg legacy и обычный WireGuard различаются четырьмя
         // значениями.
+        services.AddScoped<IProtocolConfigurator>(sp => WireGuard(sp, WireGuardProfile.Awg3));
+        services.AddScoped<IProtocolInstaller>(sp =>
+            new WireGuardInstaller(WireGuardInstallProfile.Awg3, sp.GetRequiredService<ScriptRegistry>()));
         services.AddScoped<IProtocolConfigurator>(sp => WireGuard(sp, WireGuardProfile.Awg2));
         services.AddScoped<IProtocolConfigurator>(sp => WireGuard(sp, WireGuardProfile.AwgLegacy));
         services.AddScoped<IProtocolConfigurator>(sp => WireGuard(sp, WireGuardProfile.WireGuard));

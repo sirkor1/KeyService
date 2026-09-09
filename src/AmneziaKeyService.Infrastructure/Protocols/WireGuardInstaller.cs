@@ -23,10 +23,13 @@ public class WireGuardInstaller : ProtocolInstallerBase
     /// AmneziaWG второй версии требует ядро 4.14+: модуль amneziawg-go
     /// на более старых просто не поднимется.
     /// </summary>
-    public override bool RequiresModernKernel => _profile.Kind == ProtocolKinds.Awg2;
+    public override bool RequiresModernKernel => _profile.Kind is ProtocolKinds.Awg2 or ProtocolKinds.Awg3;
 
     protected override string ScriptFolder => _profile.ScriptFolder;
     protected override string ContainerName => _profile.ContainerName;
+    protected override string? BaseImage => _profile.Kind == ProtocolKinds.Awg3
+        ? "amneziavpn/amneziawg-go@sha256:cbafc02b8373a83f428272db6d8001b37bc02e6211cbd8c0cb4e2e3759b12b72"
+        : null;
 
     protected override (ProtocolInstance, Dictionary<string, string>) Prepare(
         VpnServer server, ProtocolSpec spec)
@@ -35,7 +38,8 @@ public class WireGuardInstaller : ProtocolInstallerBase
 
         // Параметры обфускации генерируются на каждый узел заново: одинаковые
         // значения на всём флоте сами становятся сигнатурой для DPI.
-        var obfuscation = _profile.HasObfuscation ? ScriptVars.RandomObfuscation() : null;
+        var obfuscation = _profile.Kind == ProtocolKinds.Awg3 ? ScriptVars.Awg3Obfuscation()
+            : _profile.HasObfuscation ? ScriptVars.RandomObfuscation() : null;
 
         var wg = new WgProtocolParams
         {
@@ -64,6 +68,7 @@ public class WireGuardInstaller : ProtocolInstallerBase
         var vars = ScriptVars.Common(server, _profile.ContainerName);
         ScriptVars.AddWireGuard(vars, wg, port, obfuscation ?? new AwgObfuscationParams());
 
+        if (_profile.Kind == ProtocolKinds.Awg3) ScriptVars.AddAwg3(vars, obfuscation!);
         return (protocol, vars);
     }
 }
@@ -79,6 +84,12 @@ public record WireGuardInstallProfile(
     string DefaultPort,
     bool HasObfuscation)
 {
+    public static readonly WireGuardInstallProfile Awg3 = new(
+        ProtocolKinds.Awg3, "awg3", "amnezia-awg3",
+        Binary: "awg", InterfaceName: "awg0",
+        ServerConfigPath: "/opt/amnezia/awg/awg0.conf",
+        DefaultPort: "55425", HasObfuscation: true);
+
     public static readonly WireGuardInstallProfile Awg2 = new(
         ProtocolKinds.Awg2, "awg", "amnezia-awg2",
         Binary: "awg", InterfaceName: "awg0",

@@ -179,7 +179,8 @@ function ConnectionResult({ test }: { test: ConnectionTest }) {
 }
 
 const PROTOCOL_NOTE: Record<ProtocolKind, string> = {
-  awg2: 'обфусцированный WireGuard, рекомендуется по умолчанию',
+  awg3: 'новое семейство AmneziaWG 3, нужен актуальный AmneziaVPN',
+  awg2: 'AmneziaWG 2.0 для совместимости с прежними клиентами',
   awg: 'предыдущая версия AmneziaWG',
   wireguard: 'быстрый, но легко определяется DPI',
   xray: 'маскировка под TLS-трафик к чужому сайту',

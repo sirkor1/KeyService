@@ -61,9 +61,10 @@ export const initialDraft: Draft = {
   sshKeyPassphrase: '',
 
   protocols: [
+    { kind: 'awg3', enabled: true, port: '', mtu: '1376', subnetAddress: '10.8.3.0', siteName: '' },
     {
       kind: 'awg2',
-      enabled: true,
+      enabled: false,
       // Пусто — сервер выберет случайный порт из диапазона 30000–50000.
       // Фиксированный 55424 сам по себе выдаёт Amnezia при сканировании.
       port: '',

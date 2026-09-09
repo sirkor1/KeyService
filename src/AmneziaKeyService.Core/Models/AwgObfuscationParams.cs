@@ -38,6 +38,16 @@ public class AwgObfuscationParams
     [BsonElement("i4")] public string I4 { get; set; } = "";
     [BsonElement("i5")] public string I5 { get; set; } = "";
 
+    [BsonElement("headerProtectionKey")] public string HeaderProtectionKey { get; set; } = "";
+    [BsonElement("contentPaddingAddition")] public string ContentPaddingAddition { get; set; } = "";
+    [BsonElement("rekeyAfterTime")] public string RekeyAfterTime { get; set; } = "";
+    [BsonElement("rekeyTimeout")] public string RekeyTimeout { get; set; } = "";
+    [BsonElement("rejectAfterTime")] public string RejectAfterTime { get; set; } = "";
+    [BsonElement("keepaliveTimeout")] public string KeepaliveTimeout { get; set; } = "";
+    [BsonElement("maxHandshakeAttempts")] public string MaxHandshakeAttempts { get; set; } = "";
+    [BsonElement("randomTrailers")] public string RandomTrailers { get; set; } = "";
+    [BsonElement("disableCookies")] public string DisableCookies { get; set; } = "";
+
     /// <summary>MTU: 1280 на мобильных, 1376 на десктопах.</summary>
     [BsonElement("mtu")] public string Mtu { get; set; } = "1376";
 }

@@ -5,8 +5,9 @@ import type { ProtocolKind } from '@/api/types';
  * на бэкенде — нужны там, где сервер отдаёт только код (например, в настройках).
  */
 export const ProtocolDisplay: Record<ProtocolKind, string> = {
-  awg2: 'AmneziaWG',
-  awg: 'AmneziaWG',
+  awg3: 'AmneziaWG 3.1',
+  awg2: 'AmneziaWG 2.0',
+  awg: 'AmneziaWG 1.0',
   wireguard: 'WireGuard',
   xray: 'VLESS Reality',
 };

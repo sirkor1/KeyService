@@ -75,7 +75,7 @@ public class HealthPollerService : PeriodicWorker
 
         await ApplyStatusAsync(services, server, probe is not null, ct);
 
-        await services.GetRequiredService<IVpnServerRepository>().UpdateAsync(server, ct);
+        await services.GetRequiredService<IVpnServerRepository>().UpdateHealthAsync(server, ct);
 
         await services.GetRequiredService<IUsageRepository>().RecordHealthCheckAsync(
             server.Id, DateOnly.FromDateTime(DateTime.UtcNow), probe is not null, ct);

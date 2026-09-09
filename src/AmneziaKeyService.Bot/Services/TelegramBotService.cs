@@ -438,7 +438,13 @@ public class TelegramBotService : IHostedService
                 break;
 
             default:
-                if (data.StartsWith("server:"))
+                if (data.StartsWith("np:"))
+                {
+                    var parts = data.Split(':');
+                    if (parts.Length == 3)
+                        await CreateNewVpnConfigAsync(bot, chatId, messageId, user.Id, parts[1], parts[2], ct);
+                }
+                else if (data.StartsWith("server:"))
                 {
                     var serverId = data["server:".Length..];
                     await HandleServerSelectedAsync(bot, chatId, messageId, user.Id, serverId, ct);
@@ -457,7 +463,7 @@ public class TelegramBotService : IHostedService
                 else if (data.StartsWith("newkey:"))
                 {
                     var serverId = data["newkey:".Length..];
-                    await CreateNewVpnConfigAsync(bot, chatId, messageId, user.Id, serverId, ct);
+                    await ShowProtocolSelectionAsync(bot, chatId, messageId, serverId, ct);
                 }
                 break;
         }
@@ -557,7 +563,7 @@ public class TelegramBotService : IHostedService
         }
         else
         {
-            await CreateNewVpnConfigAsync(bot, chatId, messageId, userId, serverId, ct);
+            await ShowProtocolSelectionAsync(bot, chatId, messageId, serverId, ct);
         }
     }
 
@@ -570,7 +576,7 @@ public class TelegramBotService : IHostedService
         var rows = keys
             .Select((k, i) => new[]
             {
-                InlineKeyboardButton.WithCallbackData($"🔑 Ключ #{i + 1} — {k.AssignedIp}", KeyCallback("key", k.Id, "s"))
+                InlineKeyboardButton.WithCallbackData($"🔑 #{i + 1} — {ProtocolKinds.DisplayName(k.ProtocolKind ?? "")} — {k.AssignedIp}", KeyCallback("key", k.Id, "s"))
             })
             .Append(new[] { InlineKeyboardButton.WithCallbackData("➕ Новый ключ", $"newkey:{serverId}") })
             .Append(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Назад",     $"server:{serverId}") })
@@ -774,16 +780,23 @@ public class TelegramBotService : IHostedService
     /// </summary>
     private async Task CreateNewVpnConfigAsync(
         ITelegramBotClient bot, long chatId, int messageId,
-        string userId, string serverId, CancellationToken ct)
+        string userId, string serverId, string protocolId, CancellationToken ct)
     {
         // Проверяем сервер здесь: узел worker не читает синхронно, и NotFoundException
         // из IVpnConfigService, которым раньше ловилась эта ситуация, теперь
         // некому бросить — бот вообще не открывает SSH.
-        if (await _servers.GetByIdAsync(serverId, ct) is null)
+        var server = await _servers.GetByIdAsync(serverId, ct);
+        if (server is null)
         {
             await bot.EditMessageText(chatId, messageId,
                 "Сервер не найден. Возможно, он был удалён.",
                 replyMarkup: BackKeyboard(), cancellationToken: ct);
+            return;
+        }
+
+        if (server.IssuanceProtocol(protocolId) is null)
+        {
+            await ShowProtocolSelectionAsync(bot, chatId, messageId, serverId, ct);
             return;
         }
 
@@ -804,7 +817,7 @@ public class TelegramBotService : IHostedService
                     ServerId: serverId,
                     OwnerUserId: userId,
                     OwnerCreated: false,
-                    ProtocolId: null,
+                    ProtocolId: protocolId,
                     OwnerName: null,
                     DeviceName: null,
                     Label: null,
@@ -825,6 +838,20 @@ public class TelegramBotService : IHostedService
                 "Ошибка при создании ключа. Попробуйте позже.",
                 replyMarkup: BackKeyboard(), cancellationToken: ct);
         }
+    }
+
+    private async Task ShowProtocolSelectionAsync(ITelegramBotClient bot, long chatId, int messageId,
+        string serverId, CancellationToken ct)
+    {
+        var server = await _servers.GetByIdAsync(serverId, ct);
+        var protocols = server?.Protocols.Where(server.CanIssue).ToList() ?? [];
+        var rows = protocols.Select(p => new[] {
+            InlineKeyboardButton.WithCallbackData(ProtocolKinds.DisplayName(p.Kind), $"np:{serverId}:{p.Id}")
+        }).Append(new[] { InlineKeyboardButton.WithCallbackData("⬅️ Назад", $"server:{serverId}") }).ToArray();
+        await bot.EditMessageText(chatId, messageId,
+            protocols.Count == 0 ? "На сервере сейчас нет протоколов для выдачи новых ключей."
+                : $"Выберите протокол для нового ключа на сервере «{server!.Name}». Для AmneziaWG 3.1 нужен актуальный AmneziaVPN.",
+            replyMarkup: new InlineKeyboardMarkup(rows), cancellationToken: ct);
     }
 
     private static string PluralKeys(int count) => count switch
