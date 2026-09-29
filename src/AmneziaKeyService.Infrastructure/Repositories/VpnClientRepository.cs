@@ -24,13 +24,13 @@ public class VpnClientRepository : IVpnClientRepository
     // ── Существующие запросы: на них завязаны бот и /api/vpn/* ────────────────
 
     public Task<VpnClient?> FindByUserIdAndServerAsync(string userId, string serverId, CancellationToken ct = default)
-        => _collection.Find(x => x.UserId == userId && x.ServerId == serverId).FirstOrDefaultAsync(ct)!;
+        => _collection.Find(x => x.UserId == userId && x.ServerId == serverId && x.Source != "router").FirstOrDefaultAsync(ct)!;
 
     public Task<List<VpnClient>> GetByUserIdAsync(string userId, CancellationToken ct = default)
-        => _collection.Find(x => x.UserId == userId && x.IsActive).ToListAsync(ct);
+        => _collection.Find(x => x.UserId == userId && x.IsActive && x.Source != "router").ToListAsync(ct);
 
     public Task<List<VpnClient>> GetByUserIdAndServerAsync(string userId, string serverId, CancellationToken ct = default)
-        => _collection.Find(x => x.UserId == userId && x.ServerId == serverId && x.IsActive).ToListAsync(ct);
+        => _collection.Find(x => x.UserId == userId && x.ServerId == serverId && x.IsActive && x.Source != "router").ToListAsync(ct);
 
     /// <summary>
     /// Невалидный ObjectId — это «не найдено», а не ошибка: id приходит из URL.
@@ -105,11 +105,12 @@ public class VpnClientRepository : IVpnClientRepository
             // Regex.Escape: строка приходит от пользователя, спецсимволы
             // регулярного выражения должны трактоваться буквально.
             var pattern = new BsonRegularExpression(Regex.Escape(query.Search), "i");
-            filters.Add(b.Or(
+            var textFilter = b.Or(
                 b.Regex(x => x.OwnerName,  pattern),
                 b.Regex(x => x.DeviceName, pattern),
                 b.Regex(x => x.ShortId,    pattern),
-                b.Regex(x => x.Label,      pattern)));
+                b.Regex(x => x.Label,      pattern));
+            filters.Add(ObjectId.TryParse(query.Search, out _) ? b.Or(textFilter, b.Eq(x => x.Id, query.Search)) : textFilter);
         }
 
         if (!string.IsNullOrWhiteSpace(query.Status))

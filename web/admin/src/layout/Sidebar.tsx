@@ -3,6 +3,8 @@ import type { DashboardSummary } from '@/api/types';
 import { formatTime } from '@/lib/format';
 import { cx } from '@/components/Btn';
 import { useAuth } from '@/auth/AuthProvider';
+import { useQuery } from '@tanstack/react-query';
+import { routerKeys, routersApi } from '@/api/routers';
 import styles from './Sidebar.module.css';
 
 interface NavItem {
@@ -22,7 +24,7 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, canWrite: boolean): NavGroup[] {
+function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, canWrite: boolean, offlineRouters: number): NavGroup[] {
   const badges = summary?.navBadges;
 
   return [
@@ -44,6 +46,10 @@ function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, c
       ],
     },
     {
+      title: 'Наблюдение',
+      items: [{ to: '/routers', label: 'Роутеры', badge: offlineRouters, hideZeroBadge: true, badgeTitle: 'Роутеров без связи' }],
+    },
+    {
       title: 'Система',
       items: [
         {
@@ -63,9 +69,10 @@ function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, c
 
 export function Sidebar({ summary }: { summary: DashboardSummary | undefined }) {
   const { can } = useAuth();
+  const routers = useQuery({ queryKey: routerKeys.list, queryFn: routersApi.list, refetchInterval: 15000 });
   return (
     <nav className={styles.sidebar} aria-label="Основная навигация">
-      {buildGroups(summary, can('panel:admin'), can('panel:write')).map((group) => (
+      {buildGroups(summary, can('panel:admin'), can('panel:write'), routers.data?.filter(r => r.state === 'offline').length ?? 0).map((group) => (
         <section key={group.title} className={styles.group}>
           <h6 className={styles.groupTitle}>{group.title}</h6>
 

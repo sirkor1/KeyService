@@ -30,6 +30,9 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddAmneziaProtocols();
         services.Configure<NotificationOptions>(config.GetSection("Notifications"));
 
+        // Gate every dispatcher before it can read or mutate the new collections.
+        services.AddHostedService<MongoSchemaGate>();
+
         // Клиент Telegram, диспетчер событий и обработчик уведомления
         // регистрируются вместе и только при заданном токене.
         // TelegramBotClient не строится на пустой строке, а диспетчер без
@@ -42,11 +45,11 @@ var host = Host.CreateDefaultBuilder(args)
             services.AddAmneziaEventProcessing(config);
             services.AddScoped<IDomainEventHandler, KeyIssuedNotificationHandler>();
             services.AddHostedService<NotificationDispatcher>();
+            services.AddHostedService<RouterNotificationDispatcher>();
         }
 
         // Схему правит worker. Бот дожидается, а не мигрирует сам:
         // три раннера на одной базе дали бы гонку на _migrations.
-        services.AddHostedService<MongoSchemaGate>();
         services.AddHostedService<TelegramBotService>();
     })
     .Build();

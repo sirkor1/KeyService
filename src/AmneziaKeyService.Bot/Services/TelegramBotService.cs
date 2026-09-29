@@ -9,6 +9,7 @@ using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
 using MongoDB.Bson;
+using AmneziaKeyService.Infrastructure.Repositories;
 
 using AppUser = AmneziaKeyService.Core.Models.User;
 
@@ -33,6 +34,7 @@ public class TelegramBotService : IHostedService
         new() { Command = "menu",    Description = "Открыть главное меню" },
         new() { Command = "servers", Description = "Показать доступные серверы" },
         new() { Command = "keys",    Description = "Показать мои ключи" },
+        new() { Command = "routers", Description = "Мои роутеры и состояние связи" },
         new() { Command = "help",    Description = "Показать справку" }
     ];
 
@@ -225,6 +227,9 @@ public class TelegramBotService : IHostedService
 
         switch (command)
         {
+            case "routers":
+                if (RouterMonitorRules.CanReceive(user)) await ShowRoutersAsync(bot, chatId, user.Id, ct);
+                break;
             case "menu":
                 await SendMainMenuAsync(bot, chatId, "Выберите действие:", ct);
                 break;
@@ -259,6 +264,7 @@ public class TelegramBotService : IHostedService
             "/menu — открыть главное меню\n" +
             "/servers — список доступных серверов\n" +
             "/keys — мои VPN-ключи\n" +
+            "/routers — мои роутеры\n" +
             "/help — эта справка" + registrationHint,
             cancellationToken: ct);
     }
@@ -407,6 +413,7 @@ public class TelegramBotService : IHostedService
 
     private async Task HandleCallbackQueryAsync(ITelegramBotClient bot, CallbackQuery query, CancellationToken ct)
     {
+        if (query.Message?.Chat.Type != ChatType.Private) return;
         var chatId     = query.Message!.Chat.Id;
         var messageId  = query.Message.MessageId;
         var telegramId = query.From.Id;
@@ -425,6 +432,9 @@ public class TelegramBotService : IHostedService
 
         switch (data)
         {
+            case "cmd:routers":
+                if (RouterMonitorRules.CanReceive(user)) await ShowRoutersAsync(bot, chatId, user.Id, ct);
+                break;
             case "cmd:menu":
                 await EditMainMenuAsync(bot, chatId, messageId, "Выберите действие:", ct);
                 break;
@@ -438,7 +448,11 @@ public class TelegramBotService : IHostedService
                 break;
 
             default:
-                if (data.StartsWith("np:"))
+                if (data.StartsWith("router:"))
+                {
+                    if (RouterMonitorRules.CanReceive(user)) await ToggleRouterAsync(bot, chatId, user.Id, data, ct);
+                }
+                else if (data.StartsWith("np:"))
                 {
                     var parts = data.Split(':');
                     if (parts.Length == 3)
@@ -702,7 +716,7 @@ public class TelegramBotService : IHostedService
     private async Task<VpnClient?> GetOwnedActiveClientAsync(string userId, string clientId, CancellationToken ct)
     {
         var client = await _clients.FindByIdAsync(clientId, ct);
-        return client is { IsActive: true } && client.UserId == userId ? client : null;
+        return client is { IsActive: true } && client.Source != "router" && client.UserId == userId ? client : null;
     }
 
     private async Task<string> BuildVpnUriAsync(VpnClient client, CancellationToken ct)
@@ -863,10 +877,47 @@ public class TelegramBotService : IHostedService
 
     // ── Keyboards ─────────────────────────────────────────────────────────────
 
+    private async Task ShowRoutersAsync(ITelegramBotClient bot, long chatId, string userId, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<RouterMonitorRepository>();
+        var list = await repository.ForUserAsync(userId, ct);
+        if (list.Count == 0)
+        {
+            await bot.SendMessage(chatId, "Роутеры ещё не привязаны. Администратор может добавить их в разделе «Роутеры».", cancellationToken: ct);
+            return;
+        }
+        foreach (var r in list)
+        {
+            var history = await repository.HistoryAsync(r.Id, ct, 20);
+            var last = history.FirstOrDefault(h => h.OutageSeconds is not null);
+            var summary = last is null ? "" : $"\nПоследний измеренный перерыв: около {Math.Ceiling(last.OutageSeconds!.Value / 60)} мин. ({last.At:dd.MM HH:mm} UTC)";
+            var state = RouterStates.Label(RouterStates.Effective(r, DateTime.UtcNow));
+            await bot.SendMessage(chatId, $"{r.Name}: {state}\nПоследний handshake: {r.LastHandshakeAt:dd.MM HH:mm} UTC{summary}\nУведомления: {(r.NotificationsEnabled ? "включены" : "выключены")}",
+                replyMarkup: new InlineKeyboardMarkup(new[] { InlineKeyboardButton.WithCallbackData(
+                    r.NotificationsEnabled ? "Выключить уведомления" : "Включить уведомления", $"router:{r.Id}:{(r.NotificationsEnabled ? "off" : "on")}") }), cancellationToken: ct);
+        }
+    }
+
+    private async Task ToggleRouterAsync(ITelegramBotClient bot, long chatId, string userId, string data, CancellationToken ct)
+    {
+        var parts = data.Split(':');
+        if (parts.Length != 3 || parts[2] is not ("on" or "off")) return;
+        using var scope = _scopeFactory.CreateScope();
+        var repository = scope.ServiceProvider.GetRequiredService<RouterMonitorRepository>();
+        var r = await repository.GetAsync(parts[1], ct);
+        if (r is null || r.Archived || r.UserId != userId) return;
+        r.NotificationsEnabled = parts[2] == "on";
+        r.DeliveryGeneration++;
+        var saved = await repository.SaveAsync(r, ct);
+        await bot.SendMessage(chatId, saved ? "Настройки уведомлений сохранены." : "Состояние изменилось. Повторите действие через /routers.", cancellationToken: ct);
+    }
+
     private static InlineKeyboardMarkup MainMenuKeyboard() => new(new[]
     {
         new[] { InlineKeyboardButton.WithCallbackData("📋 Список серверов", "cmd:servers") },
-        new[] { InlineKeyboardButton.WithCallbackData("🔑 Мои ключи",       "cmd:mykeys") }
+        new[] { InlineKeyboardButton.WithCallbackData("🔑 Мои ключи",       "cmd:mykeys") },
+        new[] { InlineKeyboardButton.WithCallbackData("📡 Мои роутеры",      "cmd:routers") }
     });
 
     private static InlineKeyboardMarkup BackKeyboard() => new(new[]

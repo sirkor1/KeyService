@@ -32,6 +32,7 @@ src/AmneziaKeyService.Worker          миграции, сидирование �
 src/AmneziaKeyService.Bot             Telegram-бот
 tools/VerifyVpnUri                    офлайн-проверка формата vpn://
 tools/VerifyMonitoring                офлайн-проверка разбора wg dump и редактирования секретов
+tools/VerifyRouterMonitoring          состояния роутеров, профиль, права API; --mongo добавляет интеграционные проверки
 tools/VerifyUserManagement            офлайн-проверка правил управления пользователями и legacy passcode BSON
 tools/VerifyPanelSettings             офлайн-проверка границ настроек панели
 tools/VerifyRefreshTokens             офлайн-проверка hash/rotation/reuse refresh-сессий
@@ -294,4 +295,5 @@ MongoDB локально — 6.0.5 на `localhost:27017`, база `amnezia_vpn
 - `Plan.md` — план работ и текущая точка
 - `DEPLOYMENT.md` — production-развёртывание на VPS через GitHub Actions и GHCR
 - `README.md` — краткое описание API
+- `ROUTER_MONITORING.md` — наблюдение за роутерами, Telegram, настройка TP-Link и проверки
 - `src/AmneziaKeyService.Infrastructure/ServerScripts/UPSTREAM.md` — происхождение скриптов

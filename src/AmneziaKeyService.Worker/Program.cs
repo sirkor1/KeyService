@@ -33,6 +33,7 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddAmneziaNodeAccess();
         services.AddAmneziaInstallExecution();
         services.AddAmneziaKeyIssuing();
+        services.AddScoped<RouterObservationService>();
 
         // Шина событий и обработчики. Установка исполняется здесь: она идёт
         // минутами и не должна прерываться перезапуском веб-процесса.

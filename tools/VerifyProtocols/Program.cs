@@ -6,6 +6,7 @@ using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.Install;
+using AmneziaKeyService.Infrastructure.Migrations;
 using AmneziaKeyService.Infrastructure.Protocols;
 using AmneziaKeyService.Infrastructure.Repositories;
 using AmneziaKeyService.Infrastructure.Scripts;
@@ -46,6 +47,22 @@ var ssh = Stub.Create<ISshSession>((method, values) => {
     return Task.CompletedTask;
 });
 var progress = Stub.Create<IInstallProgress>((_, _) => Task.CompletedTask);
+// Check the install/read boundary against the actual upstream scripts, not just
+// a permissive SSH stub that returns a key for every requested file path.
+var freshSsh = Stub.Create<ISshSession>((method, _) => {
+    if (method.Name == nameof(ISshSession.DisposeAsync)) return ValueTask.CompletedTask;
+    if (method.ReturnType == typeof(Task<string>)) return Task.FromResult("");
+    if (method.ReturnType == typeof(Task<SshResult>)) return Task.FromResult(new SshResult(0, "", ""));
+    return Task.CompletedTask;
+});
+foreach (var profile in new[] { WireGuardInstallProfile.WireGuard, WireGuardInstallProfile.AwgLegacy, WireGuardInstallProfile.Awg2, WireGuardInstallProfile.Awg3 })
+{
+    var installed = await new WireGuardInstaller(profile, scripts).InstallAsync(freshSsh, server,
+        new ProtocolSpec { Kind = profile.Kind, SubnetAddress = "10.77.77.0" }, progress);
+    var configuration = scripts.Read($"{profile.ScriptFolder}/configure_container.sh");
+    foreach (var path in new[] { installed.Wg!.ServerPubKeyPath, installed.Wg.PskKeyPath, installed.Wg.ServerConfigPath })
+        Check(configuration.Contains("> " + path), $"{profile.Kind}: reads file created by upstream script ({path})");
+}
 var protocol = await installer.InstallAsync(ssh, server, spec, progress);
 Check(protocol.ContainerName == "amnezia-awg3" && protocol.Id != old.Id, "new isolated container and stable old ID");
 Check(!operations.Any(s => s.Contains("docker rm") || s.Contains("docker stop")), "installation never removes or stops old containers");
@@ -123,6 +140,24 @@ if (mongoArg is not null)
         Check((await repo.GetByIdAsync(server.Id))!.Protocols.Count == 3, "metadata updates preserve installed protocols");
         await repo.UpdateInstallationAsync(saved);
         Check((await repo.GetByIdAsync(server.Id))!.Name == "Updated during install", "installation preserves concurrent metadata changes");
+
+        var brokenWg = new ProtocolInstance { Kind = ProtocolKinds.WireGuard, ContainerName = "amnezia-wireguard", State = ProtocolStates.Failed,
+            Wg = new WgProtocolParams { ServerConfigPath = "/opt/amnezia/wireguard/wg0.conf", ServerPubKey = "cached-public", PskKey = "cached-psk" } };
+        var customWg = new ProtocolInstance { Kind = ProtocolKinds.WireGuard,
+            Wg = new WgProtocolParams { ServerConfigPath = "/custom/wg0.conf", ServerPubKeyPath = "/custom/public.key", PskKeyPath = "/custom/psk.key" } };
+        saved.Protocols.AddRange([brokenWg, customWg]);
+        await repo.UpdateInstallationAsync(saved);
+        var migration = new M015_WireGuardKeyPaths(Options.Create(new MongoDbOptions { DatabaseName = dbName }));
+        await migration.ApplyAsync(mongo.GetDatabase(dbName), CancellationToken.None);
+        await migration.ApplyAsync(mongo.GetDatabase(dbName), CancellationToken.None);
+        var repaired = (await repo.GetByIdAsync(server.Id))!;
+        var repairedWg = repaired.FindProtocol(brokenWg.Id)!;
+        Check(repairedWg.Wg!.ServerPubKeyPath == "/opt/amnezia/wireguard/wireguard_server_public_key.key" &&
+            repairedWg.Wg.PskKeyPath == "/opt/amnezia/wireguard/wireguard_psk.key", "path migration repairs saved WG defaults and is repeatable");
+        Check(repairedWg.State == ProtocolStates.Failed && repairedWg.Wg.ServerPubKey == "cached-public" && repairedWg.Wg.PskKey == "cached-psk",
+            "path migration preserves keys and does not claim failed installation succeeded");
+        Check(repaired.FindProtocol(old.Id)!.Wg!.ServerPubKeyPath == old.Wg.ServerPubKeyPath &&
+            repaired.FindProtocol(customWg.Id)!.Wg!.PskKeyPath == "/custom/psk.key", "path migration preserves AWG and custom paths");
     }
     finally { await mongo.DropDatabaseAsync(dbName); }
 }

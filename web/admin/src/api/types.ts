@@ -181,7 +181,7 @@ export interface ServerDetail {
 // ── Ключи ──────────────────────────────────────────────────────────────────
 
 export type KeyStatus = 'active' | 'revoked' | 'expired' | 'suspended' | 'pendingRevoke';
-export type KeySource = 'telegram' | 'panel' | 'api';
+export type KeySource = 'telegram' | 'panel' | 'api' | 'router';
 
 export interface KeyListItem {
   id: string;
@@ -203,6 +203,7 @@ export interface KeyListItem {
   online: boolean;
   status: KeyStatus;
   source: KeySource;
+  routerId?: string | null;
 }
 
 /**

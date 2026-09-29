@@ -3,6 +3,7 @@ using AmneziaKeyService.Core.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using AmneziaKeyService.Infrastructure.Repositories;
 
 namespace AmneziaKeyService.Infrastructure.Monitoring;
 
@@ -19,30 +20,49 @@ namespace AmneziaKeyService.Infrastructure.Monitoring;
 /// </summary>
 public class StatsPollerService : PeriodicWorker
 {
+    private readonly TimeSpan _statsInterval;
+    private DateTime _nextStatsAt;
+    private bool _collectUsage;
     public StatsPollerService(
         IServiceScopeFactory scopeFactory,
         IOptions<PollingOptions> options,
         ILogger<StatsPollerService> logger)
         : base(scopeFactory,
-               options.Value.For(TimeSpan.FromSeconds(options.Value.StatsIntervalSeconds)),
+               options.Value.For(TimeSpan.FromSeconds(Math.Min(30, options.Value.StatsIntervalSeconds))),
                logger)
     {
+        _statsInterval = TimeSpan.FromSeconds(Math.Max(1, options.Value.StatsIntervalSeconds));
     }
 
     protected override string Name => "stats";
 
     protected override async Task TickAsync(IServiceProvider services, CancellationToken ct)
     {
+        await services.GetRequiredService<RouterObservationService>().PrepareAsync(ct);
         var servers = await services.GetRequiredService<IVpnServerRepository>().GetAllAsync(ct);
+        var routers = await services.GetRequiredService<RouterMonitorRepository>().ListAsync(ct);
+        _collectUsage = DateTime.UtcNow >= _nextStatsAt;
+        if (_collectUsage) _nextStatsAt = DateTime.UtcNow + _statsInterval;
 
         var pollable = servers
-            .Where(s => s.Status == ServerStatuses.Ok)
-            .Where(s => s.Protocols.Any(IsPollable))
+            .Where(s => (_collectUsage && s.Status == ServerStatuses.Ok && s.Protocols.Any(IsPollable)) || routers.Any(r => r.ServerId == s.Id && !r.Paused))
             .ToList();
+
+        foreach (var missing in routers.Where(r => servers.All(s => s.Id != r.ServerId)).Select(r => r.ServerId).Distinct())
+            await services.GetRequiredService<RouterObservationService>().ObserveAsync(missing, null, null, "VPN-узел удалён", ct);
 
         if (pollable.Count == 0) return;
 
-        await ForEachServerAsync(pollable, PollAsync, ct);
+        await ForEachServerAsync(pollable, async (scope, server, token) =>
+        {
+            var sampledAt = DateTime.UtcNow;
+            try { await PollAsync(scope, server, token); }
+            catch (Exception) when (!token.IsCancellationRequested)
+            {
+                await scope.GetRequiredService<RouterObservationService>().ObserveAsync(server.Id, null, null, "VPN-узел недоступен для опроса", token, sampledAt);
+                throw;
+            }
+        }, ct);
     }
 
     /// <summary>Протокол, с которого вообще можно снять счётчики.</summary>
@@ -66,7 +86,11 @@ public class StatsPollerService : PeriodicWorker
             .GroupBy(c => c.ClientPubKey!)
             .ToDictionary(g => g.Key, g => g.First());
 
-        if (byPubKey.Count == 0) return;
+        var monitored = (await services.GetRequiredService<RouterMonitorRepository>().ListAsync(ct)).Where(r => r.ServerId == server.Id).ToList();
+        if (byPubKey.Count == 0 && monitored.Count == 0) return;
+        var observer = services.GetRequiredService<RouterObservationService>();
+        foreach (var protocolId in monitored.Where(r => !server.Protocols.Any(p => p.Id == r.ProtocolId && IsPollable(p))).Select(r => r.ProtocolId).Distinct())
+            await observer.ObserveAsync(server.Id, protocolId, [], "Протокол отсутствует или не установлен", ct);
 
         var updates = new List<KeyUsageUpdate>();
         var deltas  = new List<UsageDelta>();
@@ -78,9 +102,12 @@ public class StatsPollerService : PeriodicWorker
             .GetRequiredService<ISshSessionFactory>()
             .ConnectAsync(server, ct);
 
-        foreach (var protocol in server.Protocols.Where(IsPollable))
+        foreach (var protocol in server.Protocols.Where(IsPollable).Where(p => _collectUsage || monitored.Any(r => r.ProtocolId == p.Id && !r.Paused)))
         {
+            var sampledAt = DateTime.UtcNow;
             var peers = await ReadPeersAsync(ssh, server, protocol, ct);
+            await observer.ObserveAsync(server.Id, protocol.Id, peers, peers is null ? "Не удалось прочитать WireGuard" : null, ct, sampledAt);
+            if (peers is null || !_collectUsage) continue;
 
             foreach (var peer in peers)
             {
@@ -119,7 +146,7 @@ public class StatsPollerService : PeriodicWorker
             server.Name, updates.Count, serverRx, serverTx);
     }
 
-    private async Task<List<WgPeer>> ReadPeersAsync(
+    private async Task<List<WgPeer>?> ReadPeersAsync(
         ISshSession ssh, VpnServer server, ProtocolInstance protocol, CancellationToken ct)
     {
         var wg = protocol.Wg!;
@@ -136,9 +163,11 @@ public class StatsPollerService : PeriodicWorker
                 "(контейнер {ContainerName}, код {ExitStatus}).",
                 server.Name, protocol.Kind, protocol.ContainerName, result.ExitStatus);
 
-            return [];
+            return null;
         }
 
-        return WgDumpParser.Parse(result.StdOut);
+        // Empty/malformed output is a failed observation, not an empty peer list.
+        var firstLine = result.StdOut.Split('\n')[0].TrimEnd('\r').Split('\t');
+        return firstLine.Length == 4 ? WgDumpParser.Parse(result.StdOut) : null;
     }
 }

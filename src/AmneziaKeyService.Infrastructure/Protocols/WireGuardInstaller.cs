@@ -35,6 +35,9 @@ public class WireGuardInstaller : ProtocolInstallerBase
         VpnServer server, ProtocolSpec spec)
     {
         var port = spec.Port ?? ScriptVars.RandomPort();
+        // Upstream keeps the keys beside the server config. Plain WireGuard
+        // uses /wireguard/, while all AWG variants use /awg/.
+        var configDirectory = _profile.ServerConfigPath[.._profile.ServerConfigPath.LastIndexOf('/')];
 
         // Параметры обфускации генерируются на каждый узел заново: одинаковые
         // значения на всём флоте сами становятся сигнатурой для DPI.
@@ -46,8 +49,8 @@ public class WireGuardInstaller : ProtocolInstallerBase
             InterfaceName    = _profile.InterfaceName,
             Binary           = _profile.Binary,
             ServerConfigPath = _profile.ServerConfigPath,
-            ServerPubKeyPath = "/opt/amnezia/awg/wireguard_server_public_key.key",
-            PskKeyPath       = "/opt/amnezia/awg/wireguard_psk.key",
+            ServerPubKeyPath = configDirectory + "/wireguard_server_public_key.key",
+            PskKeyPath       = configDirectory + "/wireguard_psk.key",
             SubnetAddress    = spec.SubnetAddress ?? "10.8.1.0",
             SubnetCidr       = spec.SubnetCidr ?? "24",
             Obfuscation      = obfuscation,

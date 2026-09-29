@@ -9,6 +9,7 @@ using AmneziaKeyService.Core.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
+using AmneziaKeyService.Infrastructure.Repositories;
 
 namespace AmneziaKeyService.Api.Controllers;
 
@@ -23,6 +24,7 @@ public partial class KeysController : ControllerBase
     private readonly IVpnConfigReader _vpnConfigReader;
     private readonly IPanelSettingsRepository _settings;
     private readonly IDomainEventPublisher _events;
+    private readonly RouterMonitorRepository _routers;
 
     public KeysController(
         IVpnClientRepository clients,
@@ -30,7 +32,7 @@ public partial class KeysController : ControllerBase
         IUserRepository users,
         IVpnConfigReader vpnConfigReader,
         IPanelSettingsRepository settings,
-        IDomainEventPublisher events)
+        IDomainEventPublisher events, RouterMonitorRepository routers)
     {
         _clients         = clients;
         _servers         = servers;
@@ -38,6 +40,7 @@ public partial class KeysController : ControllerBase
         _vpnConfigReader = vpnConfigReader;
         _settings        = settings;
         _events          = events;
+        _routers         = routers;
     }
 
     // ── Чтение ────────────────────────────────────────────────────────────────
@@ -59,9 +62,10 @@ public partial class KeysController : ControllerBase
 
         var serverNames = await LoadServerNamesAsync(ct);
         var owners      = await LoadOwnersAsync(keys.Items, ct);
+        var routerIds = (await _routers.ListAsync(ct)).ToDictionary(r => r.KeyId, r => r.Id);
 
         return Ok(keys.Map(k => KeyListItemDto.From(
-            k, serverNames.GetValueOrDefault(k.ServerId), owners.GetValueOrDefault(k.UserId))));
+            k, serverNames.GetValueOrDefault(k.ServerId), owners.GetValueOrDefault(k.UserId)) with { RouterId = routerIds.GetValueOrDefault(k.Id) }));
     }
 
     [HttpGet("{id}")]

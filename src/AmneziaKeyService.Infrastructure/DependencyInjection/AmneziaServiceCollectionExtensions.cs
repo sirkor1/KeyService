@@ -50,6 +50,7 @@ public static class AmneziaServiceCollectionExtensions
         services.AddSingleton<IInstallJobRepository, InstallJobRepository>();
         services.AddSingleton<IUsageRepository, UsageRepository>();
         services.AddSingleton<INotificationRepository, NotificationRepository>();
+        services.AddSingleton<RouterMonitorRepository>();
 
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
         services.AddScoped<IAuditService, AuditService>();
@@ -101,6 +102,8 @@ public static class AmneziaServiceCollectionExtensions
         services.AddSingleton<IMongoMigration, M011_RefreshSessions>();
         services.AddSingleton<IMongoMigration, M012_DropLegacy>();
         services.AddSingleton<IMongoMigration, M013_Notifications>();
+        services.AddSingleton<IMongoMigration, M014_RouterMonitoring>();
+        services.AddSingleton<IMongoMigration, M015_WireGuardKeyPaths>();
 
         return services;
     }

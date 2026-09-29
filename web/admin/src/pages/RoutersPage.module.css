@@ -1,0 +1,20 @@
+.grid { display: grid; gap: var(--space-3); }
+.card, .form { padding: var(--space-4); border: var(--panel-hairline) solid var(--color-divider); background: var(--color-surface); }
+.card { display: grid; gap: var(--space-2); }
+.card h3, .card p { margin: 0; }
+.row, .tabs, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.row { justify-content: space-between; }
+.meta { color: var(--color-neutral-600); font-size: var(--panel-small-size); }
+.form { display: grid; gap: var(--space-4); max-inline-size: 46rem; }
+.tabs { margin-block-end: var(--space-4); }
+.filters { margin-block-end: var(--space-4); max-inline-size: 30rem; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-4); margin: 0; }
+.facts dt { color: var(--color-neutral-600); font-size: var(--panel-small-size); }
+.facts dd { margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.checkbox { display: flex; align-items: center; gap: var(--space-2); }
+.notice { margin-block: var(--space-4); color: var(--color-neutral-600); }
+.history { margin-block-start: var(--space-5); }
+.history h3 { margin-block-end: var(--space-3); }
+.steps { padding-inline-start: var(--space-5); }
+.steps li { margin-block: var(--space-2); }
+.error { color: var(--color-accent-700); }

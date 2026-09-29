@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/api/client';
 import { keys as keysApi } from '@/api/endpoints';
@@ -48,12 +48,14 @@ function buildColumns(
           <span>—</span>
         ) : (
           <>
+            {row.source === 'router' ? (row.routerId ? <Link className="btn btn-ghost" to={`/routers/${row.routerId}`}>Профиль роутера</Link> : null) : <>
             <a className="btn btn-ghost" href={keysApi.downloadUrl(row.id)} download>
               Скачать
             </a>
             <Btn variant="ghost" onClick={() => onShowUri(row)}>
               URI
             </Btn>
+            </>}
             <Btn variant="ghost" onClick={() => onRevoke(row)}>
               Отозвать
             </Btn>
@@ -76,7 +78,7 @@ const baseColumns: Column<KeyListItem>[] = [
     header: 'Владелец',
     width: '19%',
     noEllipsis: true,
-    render: (row) => <Stacked primary={row.ownerName ?? '—'} secondary={row.deviceName} />,
+    render: (row) => <><Stacked primary={row.ownerName ?? '—'} secondary={row.deviceName} />{row.routerId ? <Link to={`/routers/${row.routerId}`}>Наблюдение за роутером</Link> : row.source === 'router' ? <span>Ключ роутера</span> : null}</>,
     title: (row) => joinMeta(row.ownerName, row.deviceName),
   },
   {

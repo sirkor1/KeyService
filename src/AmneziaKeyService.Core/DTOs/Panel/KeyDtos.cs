@@ -22,7 +22,8 @@ public record KeyListItemDto(
     DateTime? LastHandshakeAt,
     bool Online,
     string Status,
-    string Source)
+    string Source,
+    string? RouterId = null)
 {
     public static KeyListItemDto From(VpnClient c, string? serverName, string? ownerFallback) => new(
         c.Id,
