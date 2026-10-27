@@ -24,9 +24,9 @@ public class ServerMaintenanceController(ServerMaintenanceService maintenance) :
     private async Task<IActionResult> Enqueue(string id, string kind, ServerMaintenanceRequest request, CancellationToken ct)
     {
         var job = await maintenance.EnqueueAsync(id, kind, request.ConfirmationName,
-            User.FindFirst(ClaimTypes.NameIdentifier)?.Value, ct);
+            User.FindFirst(ClaimTypes.NameIdentifier)?.Value, ct, request.ForgetKeys);
         return Accepted(new JobAcceptedDto(id, job.Id));
     }
 }
 
-public record ServerMaintenanceRequest([Required] string ConfirmationName);
+public record ServerMaintenanceRequest([Required] string ConfirmationName, bool ForgetKeys = false);

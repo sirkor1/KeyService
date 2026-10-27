@@ -28,6 +28,7 @@ public class VpnConfigReader : IVpnConfigReader
 
     public async Task<string> BuildVpnUriAsync(VpnClient client, CancellationToken ct = default)
     {
+        EnsureExportable(client);
         if (client.VpnConfigJson is { } cached) return AmneziaUriEncoder.Encode(cached);
 
         var (server, protocol, configurator) = await ResolveAsync(client, ct);
@@ -74,11 +75,18 @@ public class VpnConfigReader : IVpnConfigReader
     internal async Task<(VpnServer, ProtocolInstance, IProtocolConfigurator)> ResolveAsync(
         VpnClient client, CancellationToken ct)
     {
+        EnsureExportable(client);
         var server = await _servers.GetByIdAsync(client.ServerId, ct)
             ?? throw new NotFoundException("Сервер этого ключа не найден.");
 
         var protocol = ResolveProtocol(server, client.ProtocolId);
         return (server, protocol, _protocols.GetConfigurator(protocol.Kind));
+    }
+
+    private static void EnsureExportable(VpnClient client)
+    {
+        if (client.Status == KeyStatuses.Detached)
+            throw new NotFoundException("Узел удалён из панели — конфигурация ключа больше не доступна.");
     }
 
     internal static ProtocolInstance ResolveProtocol(VpnServer server, string? protocolId)

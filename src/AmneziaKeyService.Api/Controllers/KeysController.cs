@@ -172,6 +172,9 @@ public partial class KeysController : ControllerBase
         var client = await _clients.FindByIdAsync(id, ct)
             ?? throw new NotFoundException("Ключ не найден.");
 
+        if (client.Status == KeyStatuses.Detached)
+            throw new BadRequestException("Узел удалён из панели. Отозвать доступ на сервере через панель невозможно.");
+
         var evt = await _events.PublishAsync(
             DomainEventTypes.KeyRevoke,
             new KeyRevokePayload(id, RevokeReasons.Manual, CurrentUserId, req?.Comment),

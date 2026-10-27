@@ -210,7 +210,7 @@ public class VpnConfigService : IVpnConfigService
         var client = await _clients.FindByIdAsync(clientId, ct)
             ?? throw new NotFoundException("Ключ не найден.");
 
-        if (client.Status == KeyStatuses.Revoked) return client;
+        if (client.Status is KeyStatuses.Revoked or KeyStatuses.Detached) return client;
 
         var server = await _servers.GetByIdAsync(client.ServerId, ct)
             ?? throw new NotFoundException("Сервер этого ключа не найден.");

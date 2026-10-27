@@ -14,6 +14,12 @@ public interface IVpnClientRepository
     Task CreateAsync(VpnClient client, CancellationToken ct = default);
     Task UpdateAsync(VpnClient client, CancellationToken ct = default);
 
+    /// <summary>Archive local keys without claiming remote revocation. Erases secrets, keeps history.</summary>
+    Task DetachServerKeysAsync(string serverId, string? actorUserId, CancellationToken ct = default);
+
+    /// <summary>Delete every key document belonging to this server, regardless of status or protocol.</summary>
+    Task DeleteByServerAsync(string serverId, CancellationToken ct = default);
+
     /// <summary>Called only after the protocol container is confirmed absent. Keeps key history.</summary>
     Task RevokeRemovedProtocolAsync(string serverId, string protocolId, bool includeLegacy,
         string? actorUserId, CancellationToken ct = default);

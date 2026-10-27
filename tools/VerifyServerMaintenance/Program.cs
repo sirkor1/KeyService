@@ -6,6 +6,8 @@ using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.Install;
 using AmneziaKeyService.Infrastructure.Repositories;
+using AmneziaKeyService.Infrastructure.Services;
+using AmneziaKeyService.Infrastructure.Keys;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +17,9 @@ using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 
 var checks = 0;
@@ -59,6 +63,7 @@ var commandsBeforeDelete = f.Commands.Count;
 job = await f.Queue(InstallJobKinds.DeleteServer);
 await f.Service.ExecuteAsync(job, default);
 Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null && f.Commands.Count == commandsBeforeDelete, "delete removes record without SSH");
+Check(f.Keys.Count == 0, "normal delete purges revoked keys after cleanup");
 
 foreach (var status in new[] { KeyStatuses.Active, KeyStatuses.PendingRevoke, KeyStatuses.Suspended, KeyStatuses.Expired }) {
     f = new(); f.Keys = [new() { Status = status }];
@@ -68,6 +73,78 @@ f = new(); f.Keys.Clear(); job = await f.Queue(InstallJobKinds.DeleteServer);
 f.Keys.Add(new() { Status = KeyStatuses.Active });
 await f.Service.ExecuteAsync(job, default);
 Check(job.Status == InstallJobStatuses.Failed && f.Server is not null, "delete rechecks keys under lease");
+
+foreach (var status in new[] { KeyStatuses.Active, KeyStatuses.PendingRevoke, KeyStatuses.Suspended, KeyStatuses.Expired }) {
+    f = new() { Offline = true }; f.Keys = [new() { Status = status }];
+    job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+    Check(BsonSerializer.Deserialize<InstallJob>(job.ToBson()).ForgetKeys, "forget confirmation survives job persistence");
+    // Also catch keys issued between confirmation and acquiring the node lease.
+    f.Keys.Add(new() { ProtocolId = "legacy-missing-protocol" });
+    await f.Service.ExecuteAsync(job, default);
+    Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null && f.Connections == 0,
+        "offline delete without any SSH connection: " + status);
+    Check(f.Keys.Count == 0, "offline delete purges keys including those issued after confirmation: " + status);
+}
+f = new();
+await Reject(() => f.Queue(forgetKeys: true), "cleanup cannot bypass remote revocation");
+f = new() { FailDetach = true }; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.Server is not null && f.Server.IssuanceProtocol(null) is null,
+    "detach failure keeps node and blocks new issuance");
+f.FailDetach = false; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null, "explicit retry after detach failure succeeds");
+f = new() { FailDelete = true }; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.Server is not null && f.Keys.Count == 0,
+    "record deletion failure retains node after successful key purge");
+f.FailDelete = false; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null, "explicit retry after delete failure succeeds");
+f = new() { FailPurge = true }; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.Server is not null && f.Keys.Count > 0 &&
+    f.Keys.All(k => k.Status == KeyStatuses.Detached) && f.Server.IssuanceProtocol(null) is null,
+    "failed key purge retains disabled node and detached keys for retry");
+f.FailPurge = false; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null && f.Keys.Count == 0,
+    "retry after key purge failure removes node and keys");
+f = new(); job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true); job.CancelRequested = true;
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Canceled && f.Server is not null && f.Keys.All(k => k.Status != KeyStatuses.Detached),
+    "cancel before offline delete leaves node and keys intact");
+f = new(); job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true); f.Server!.Host = "192.0.2.99";
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.Keys.All(k => k.Status != KeyStatuses.Detached),
+    "offline delete rejects changed node before detaching keys");
+
+// Even if an old document still has a cached secret, exports must be blocked.
+var detached = new VpnClient { Status = KeyStatuses.Detached, VpnConfigJson = "{}" };
+var noServers = Stub.Create<IVpnServerRepository>((m, a) => throw new Exception("Unexpected server lookup"));
+var noProtocols = Stub.Create<IProtocolRegistry>((m, a) => throw new Exception("Unexpected protocol lookup"));
+var noSsh = Stub.Create<ISshSessionFactory>((m, a) => throw new Exception("Unexpected SSH connection"));
+var reader = new VpnConfigReader(noServers, noProtocols);
+foreach (var export in new Func<Task>[] { async () => { await reader.BuildVpnUriAsync(detached); }, async () => { await reader.BuildClientFileAsync(detached); } }) {
+    try { await export(); throw new Exception("Detached config exported"); }
+    catch (NotFoundException) { Check(true, "detached export blocked before cached config or node lookup"); }
+}
+var detachedRepo = Stub.Create<IVpnClientRepository>((m, a) => m.Name == "FindByIdAsync"
+    ? Task.FromResult<VpnClient?>(detached) : throw new Exception("Unexpected key mutation"));
+var configService = new VpnConfigService(detachedRepo, noServers, noProtocols, noSsh, reader, NullLogger<VpnConfigService>.Instance);
+Check((await configService.RevokeAsync("key", "manual", null)).Status == KeyStatuses.Detached,
+    "queued revocation on detached key is a no-op without SSH");
+var missingRepo = Stub.Create<IVpnClientRepository>((m, a) => m.Name == "FindByIdAsync"
+    ? Task.FromResult<VpnClient?>(null) : throw new Exception("Unexpected key operation"));
+var noConfigService = Stub.Create<IVpnConfigService>((m, a) => throw new Exception("Deleted key must not be revoked"));
+var noUsers = Stub.Create<IUserRepository>((m, a) => throw new Exception("Unexpected actor lookup"));
+var noAudit = Stub.Create<IAuditService>((m, a) => throw new Exception("Deleted key must not be reported as revoked"));
+var revokeHandler = new KeyRevokeHandler(noConfigService, missingRepo, noServers, noUsers, noAudit,
+    NullLogger<KeyRevokeHandler>.Instance);
+var skipped = await revokeHandler.HandleAsync(new DomainEvent {
+    Payload = new KeyRevokePayload("deleted-key", "manual", null, null).ToBsonDocument()
+}, default);
+Check(skipped!["status"] == "deleted", "queued revocation of purged key completes without retry, SSH or false revocation audit");
 
 f = new(); job = await f.Queue(); f.Server!.Host = "192.0.2.99";
 await f.Service.ExecuteAsync(job, default);
@@ -140,6 +217,59 @@ if (mongoArg is not null) {
         Check((await serverRepo.GetByIdAsync(server.Id))!.Status == ServerStatuses.Empty, "empty server state persists");
         await serverRepo.DeleteAsync(server.Id);
         Check(await serverRepo.GetByIdAsync(server.Id) is null, "record deletion persists");
+
+        var offlineId = ObjectId.GenerateNewId().ToString();
+        var snapshots = new List<VpnClient>();
+        foreach (var status in new[] { KeyStatuses.Active, KeyStatuses.Expired, KeyStatuses.PendingRevoke, KeyStatuses.Suspended, KeyStatuses.Revoked }) {
+            var key = new VpnClient { ServerId = offlineId, UserId = userId, ProtocolId = null, AssignedIp = "10.8.1.2",
+                ClientPrivKey = "private", PskKey = "psk", XrayClientId = "uuid", VpnConfigJson = "{}", RevokeReason = "manual" };
+            key.SetStatus(status);
+            if (status == KeyStatuses.Revoked) key.RevokedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            await repo.CreateAsync(key); snapshots.Add(key);
+        }
+        await repo.DetachServerKeysAsync(offlineId, userId);
+        var archived = (await repo.SearchAsync(new(ServerId: offlineId))).Items;
+        Check(archived.Count == 5 && archived.Count(k => k.Status == KeyStatuses.Detached) == 4,
+            "Mongo offline deletion archives every live status and keeps revoked history");
+        Check(archived.All(k => !k.IsActive && k.ClientPrivKey is null && k.PskKey is null && k.XrayClientId is null && k.VpnConfigJson is null),
+            "Mongo offline deletion erases all local secrets");
+        Check(archived.Where(k => k.Status == KeyStatuses.Detached).All(k => k.DetachedAt is not null && k.DetachedByUserId == userId && k.RevokedAt is null),
+            "Mongo records detachment actor and timestamp without inventing revocation");
+        Check(archived.Single(k => k.Status == KeyStatuses.Revoked).RevokedAt == snapshots.Last().RevokedAt,
+            "Mongo detachment preserves previous revocation date");
+        Check((await repo.GetLiveByServerAsync(offlineId)).Count == 0 && (await repo.GetAssignedIpsAsync(offlineId, null)).Count == 0 &&
+            (await repo.GetByUserIdAndServerAsync(userId, offlineId)).Count == 0 &&
+            !(await repo.FindPendingRevokeAsync(500)).Any(k => k.ServerId == offlineId),
+            "Mongo excludes detached keys from managed peers, bot and revoke retries");
+        Check((await repo.FindByIdAsync(foreign.Id))!.Status == KeyStatuses.Active,
+            "Mongo offline deletion leaves other nodes untouched");
+        await repo.DetachServerKeysAsync(offlineId, "different-actor");
+        var repeated = (await repo.SearchAsync(new(ServerId: offlineId))).Items;
+        Check(repeated.All(k => k.DetachedAt == archived.Single(oldKey => oldKey.Id == k.Id).DetachedAt &&
+            k.DetachedByUserId == archived.Single(oldKey => oldKey.Id == k.Id).DetachedByUserId),
+            "Mongo detachment retries preserve original actor and time");
+        // Simulate an enforcement worker finishing with a snapshot loaded before deletion.
+        snapshots[0].SetStatus(KeyStatuses.PendingRevoke);
+        await repo.UpdateAsync(snapshots[0]);
+        var afterStaleWrite = await repo.FindByIdAsync(snapshots[0].Id);
+        Check(afterStaleWrite!.Status == KeyStatuses.Detached && afterStaleWrite.VpnConfigJson is null,
+            "stale worker cannot restore detached keys or their secrets");
+        // Purging has no status or protocol filter: cover every state, including legacy keys.
+        foreach (var status in KeyStatuses.All) {
+            var key = new VpnClient { ServerId = offlineId, UserId = userId, ProtocolId = "other", ClientPrivKey = "private" };
+            key.SetStatus(status); await repo.CreateAsync(key);
+        }
+        await repo.DeleteByServerAsync(offlineId);
+        Check((await repo.SearchAsync(new(ServerId: offlineId))).Total == 0 &&
+            await repo.FindByIdAsync(snapshots[0].Id) is null,
+            "Mongo physically deletes every key status and legacy protocol for selected node");
+        Check((await repo.SearchAsync(new(ServerId: serverId))).Total == 7 &&
+            (await repo.FindByIdAsync(foreign.Id))!.IsActive,
+            "Mongo purge leaves all keys of other nodes untouched");
+        await repo.DeleteByServerAsync(offlineId);
+        await repo.UpdateAsync(snapshots[0]);
+        Check((await repo.SearchAsync(new(ServerId: offlineId))).Total == 0,
+            "repeated purge is safe and stale worker cannot recreate a deleted key");
     } finally { await mongo.DropDatabaseAsync(name); }
 }
 Console.WriteLine($"Server maintenance checks passed: {checks}.");
@@ -154,17 +284,27 @@ class Fixture {
     public Dictionary<string, string> Containers = new() { ["amnezia-awg3"] = new('a', 64), ["amnezia-wireguard"] = new('b', 64), ["unrelated-app"] = new('c', 64) };
     public string? Partition;
     public string? FailRemove;
-    public bool WritableMount, KeepContainer, FailPublish;
+    public bool WritableMount, KeepContainer, FailPublish, Offline, FailDetach, FailDelete, FailPurge;
+    public int Connections;
     public ServerMaintenanceService Service;
     public Fixture() {
         var servers = Stub.Create<IVpnServerRepository>((m, a) => {
             if (m.Name == "GetByIdAsync") return Task.FromResult(Server);
-            if (m.Name == "DeleteAsync") { Server = null; return Task.FromResult(true); }
+            if (m.Name == "DeleteAsync") { if (FailDelete) throw new InvalidOperationException(); Server = null; return Task.FromResult(true); }
             if (m.Name is "UpdateInstallationAsync" or "UpdateReconciliationAsync") return Task.CompletedTask;
             throw new Exception(m.Name);
         });
         var clients = Stub.Create<IVpnClientRepository>((m, a) => {
-            if (m.Name == "GetLiveByServerAsync") return Task.FromResult(Keys.Where(k => k.Status != KeyStatuses.Revoked).ToList());
+            if (m.Name == "DeleteByServerAsync") {
+                if (FailPurge) throw new InvalidOperationException();
+                Keys.Clear(); return Task.CompletedTask;
+            }
+            if (m.Name == "GetLiveByServerAsync") return Task.FromResult(Keys.Where(k => k.Status is not (KeyStatuses.Revoked or KeyStatuses.Detached)).ToList());
+            if (m.Name == "DetachServerKeysAsync") {
+                if (FailDetach) throw new InvalidOperationException();
+                foreach (var k in Keys.Where(k => k.Status != KeyStatuses.Revoked)) k.SetStatus(KeyStatuses.Detached);
+                return Task.CompletedTask;
+            }
             if (m.Name == "RevokeRemovedProtocolAsync") {
                 foreach (var k in Keys.Where(k => k.ProtocolId == (string)a[1]! || ((bool)a[2]! && k.ProtocolId is null))) k.SetStatus(KeyStatuses.Revoked);
                 return Task.CompletedTask;
@@ -201,12 +341,16 @@ class Fixture {
             }
             throw new Exception("Unexpected command " + command);
         });
-        var factory = Stub.Create<ISshSessionFactory>((m, a) => Task.FromResult(ssh));
+        var factory = Stub.Create<ISshSessionFactory>((m, a) => {
+            Connections++;
+            if (Offline) throw new Exception("Offline node must not be contacted");
+            return Task.FromResult(ssh);
+        });
         var audit = Stub.Create<IAuditService>((m, a) => Task.CompletedTask);
         Service = new(servers, clients, jobs, events, factory, audit);
     }
-    public Task<InstallJob> Queue(string kind = InstallJobKinds.CleanupServer, string confirmation = "Test node")
-        => Service.EnqueueAsync("0123456789abcdef01234567", kind, confirmation, null, default);
+    public Task<InstallJob> Queue(string kind = InstallJobKinds.CleanupServer, string confirmation = "Test node", bool forgetKeys = false)
+        => Service.EnqueueAsync("0123456789abcdef01234567", kind, confirmation, null, default, forgetKeys);
 }
 public class Stub : DispatchProxy {
     private Func<MethodInfo, object?[], object?> handler = null!;

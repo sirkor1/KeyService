@@ -13,20 +13,29 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
     IInstallJobRepository jobs, IDomainEventPublisher events, ISshSessionFactory sshFactory, IAuditService audit)
 {
     public async Task<InstallJob> EnqueueAsync(string id, string kind, string confirmation,
-        string? actor, CancellationToken ct)
+        string? actor, CancellationToken ct, bool forgetKeys = false)
     {
         if (!InstallJobKinds.IsMaintenance(kind)) throw new BadRequestException("Неизвестная операция.");
         var server = await servers.GetByIdAsync(id, ct) ?? throw new NotFoundException("Сервер не найден.");
         if (confirmation != server.Name) throw new BadRequestException("Для подтверждения введите точное имя узла.");
         if (await jobs.FindActiveByServerAsync(id, ct) is not null)
             throw new BadRequestException("Дождитесь завершения текущей операции над узлом.");
-        if (kind == InstallJobKinds.DeleteServer) await EnsureNoLiveKeysAsync(id, ct);
-        else ValidateContainers(server);
+        if (kind == InstallJobKinds.DeleteServer)
+        {
+            if (!forgetKeys) await EnsureNoLiveKeysAsync(id, ct);
+        }
+        else
+        {
+            if (forgetKeys) throw new BadRequestException("Удаление без отзыва ключей доступно только при удалении записи узла.");
+            ValidateContainers(server);
+        }
         var job = new InstallJob
         {
             ServerId = id, Kind = kind, CreatedByUserId = actor, MaintenanceRevision = Revision(server),
+            ForgetKeys = forgetKeys,
             Steps = [new() { Code = "maintenance", Title = kind == InstallJobKinds.CleanupServer
-                ? "Удаление VPN-контейнеров и отзыв ключей" : "Удаление записи узла" }]
+                ? "Удаление VPN-контейнеров и отзыв ключей"
+                : forgetKeys ? "Удаление записи узла без отзыва доступа на сервере" : "Удаление записи узла" }]
         };
         await jobs.CreateAsync(job, ct);
         try
@@ -66,7 +75,21 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
 
             if (job.Kind == InstallJobKinds.DeleteServer)
             {
+                if (job.ForgetKeys)
+                {
+                    // If detaching or deleting fails, keep the node closed to new issuance.
+                    // The node partition lease serializes this with queued key issuance.
+                    var legacyProtocolId = server.DefaultProtocol?.Id;
+                    foreach (var p in server.Protocols) { p.Enabled = false; p.State = ProtocolStates.Failed; }
+                    server.DefaultProtocolId = legacyProtocolId;
+                    server.Status = ServerStatuses.Error;
+                    await servers.UpdateInstallationAsync(server, ct);
+                    await clients.DetachServerKeysAsync(server.Id, job.CreatedByUserId, ct);
+                }
                 await EnsureNoLiveKeysAsync(server.Id, ct);
+                // Purge keys first so a failed purge retains the node for an explicit retry.
+                // Includes revoked keys and legacy keys without a protocol ID.
+                await clients.DeleteByServerAsync(server.Id, ct);
                 await servers.DeleteAsync(server.Id, ct);
             }
             else if (job.Kind == InstallJobKinds.CleanupServer)
@@ -80,7 +103,7 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
             job.ProgressPercent = 100;
             step.Status = InstallStepStatuses.Done;
             await progress.LogAsync(job.Kind == InstallJobKinds.DeleteServer
-                ? "Запись узла удалена. Контейнеры на сервере не изменялись."
+                ? "Запись узла и все выданные им ключи удалены из базы. Контейнеры на сервере не изменялись; доступ на сервере не отзывался."
                 : "VPN-контейнеры удалены, ключи отозваны. Узел сохранён для новой установки.", ct: ct);
             await AuditAsync(job, server, "completed", job.Steps[0].Title + ": завершено", ct);
         }
@@ -88,7 +111,9 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
         {
             job.Status = ex is OperationCanceledException ? InstallJobStatuses.Canceled : InstallJobStatuses.Failed;
             job.Error = ex is BadRequestException or NotFoundException or SshConnectionException or SshCommandException
-                ? ex.Message : "Операция прервана. Проверьте состояние узла и повторите её; часть контейнеров могла быть удалена.";
+                ? ex.Message : job.Kind == InstallJobKinds.DeleteServer
+                    ? "Удаление записи прервано. Обновите список узлов и повторите операцию, если узел остался. Часть или все ключи узла могли быть удалены из базы."
+                    : "Операция прервана. Проверьте состояние узла и повторите её; часть контейнеров могла быть удалена.";
             step.Status = InstallStepStatuses.Failed;
             step.Message = job.Error;
             await progress.LogAsync(job.Error, AuditLevels.Error, CancellationToken.None);
@@ -172,7 +197,7 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
     private async Task EnsureNoLiveKeysAsync(string id, CancellationToken ct)
     {
         if ((await clients.GetLiveByServerAsync(id, ct)).Count > 0)
-            throw new BadRequestException("На узле остались неотозванные ключи. Сначала выполните очистку или завершите отзыв всех ключей.");
+            throw new BadRequestException("На узле остались неотозванные ключи. Выполните очистку, завершите отзыв или подтвердите удаление записи без отзыва ключей.");
     }
 
     public static void ValidateContainers(VpnServer server)

@@ -65,7 +65,7 @@ export const servers = {
 
   refresh: (id: string) => api.post<ServerDetail>(`/servers/${id}/refresh`),
 
-  delete: (id: string, confirmationName: string) => api.delete<JobAccepted>(`/servers/${id}`, { confirmationName }),
+  delete: (id: string, confirmationName: string, forgetKeys = false) => api.delete<JobAccepted>(`/servers/${id}`, { confirmationName, forgetKeys }),
   cleanup: (id: string, confirmationName: string) => api.post<JobAccepted>(`/servers/${id}/cleanup`, { confirmationName }),
 
   install: (body: CreateServerBody) => api.post<JobAccepted>('/servers/install', body),

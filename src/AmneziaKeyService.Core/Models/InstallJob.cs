@@ -28,6 +28,10 @@ public class InstallJob
     [BsonIgnoreIfNull]
     public string? MaintenanceRevision { get; set; }
 
+    /// <summary>Явное согласие удалить запись без отзыва ключей на сервере.</summary>
+    [BsonElement("forgetKeys")]
+    public bool ForgetKeys { get; set; }
+
     /// <summary>Что именно устанавливаем.</summary>
     [BsonElement("spec")]
     public List<ProtocolSpec> Spec { get; set; } = [];

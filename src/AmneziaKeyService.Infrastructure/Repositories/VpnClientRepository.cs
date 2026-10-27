@@ -47,7 +47,28 @@ public class VpnClientRepository : IVpnClientRepository
 
     public Task UpdateAsync(VpnClient client, CancellationToken ct = default)
         => _collection.ReplaceOneAsync(
-            Builders<VpnClient>.Filter.Eq(x => x.Id, client.Id), client, cancellationToken: ct);
+            // A worker may still hold a snapshot from before the server was forgotten.
+            // Never restore its secrets or pending-revoke state over a detached key.
+            Builders<VpnClient>.Filter.Eq(x => x.Id, client.Id) &
+            Builders<VpnClient>.Filter.Ne(x => x.Status, KeyStatuses.Detached), client, cancellationToken: ct);
+
+    public Task DeleteByServerAsync(string serverId, CancellationToken ct = default)
+        => _collection.DeleteManyAsync(Builders<VpnClient>.Filter.Eq(x => x.ServerId, serverId), ct);
+
+    public async Task DetachServerKeysAsync(string serverId, string? actorUserId, CancellationToken ct = default)
+    {
+        var b = Builders<VpnClient>.Filter;
+        var scope = b.Eq(x => x.ServerId, serverId);
+        await _collection.UpdateManyAsync(scope & b.Nin(x => x.Status, new[] { KeyStatuses.Revoked, KeyStatuses.Detached }),
+            Builders<VpnClient>.Update.Set(x => x.Status, KeyStatuses.Detached).Set(x => x.IsActive, false)
+                .Set(x => x.DetachedAt, DateTime.UtcNow).Set(x => x.DetachedByUserId, actorUserId)
+                .Set(x => x.ClientPrivKey, null).Set(x => x.PskKey, null)
+                .Set(x => x.XrayClientId, null).Set(x => x.VpnConfigJson, null), cancellationToken: ct);
+        // Include old revoked keys and retries, preserving their original lifecycle metadata.
+        await _collection.UpdateManyAsync(scope, Builders<VpnClient>.Update.Set(x => x.IsActive, false)
+            .Set(x => x.ClientPrivKey, null).Set(x => x.PskKey, null)
+            .Set(x => x.XrayClientId, null).Set(x => x.VpnConfigJson, null), cancellationToken: ct);
+    }
 
     public async Task RevokeRemovedProtocolAsync(string serverId, string protocolId, bool includeLegacy,
         string? actorUserId, CancellationToken ct = default)
@@ -83,7 +104,7 @@ public class VpnClientRepository : IVpnClientRepository
             b.Eq(x => x.ServerId, serverId),
             b.Ne(x => x.AssignedIp, null),
             // Отозванные ключи освобождают адрес: их peer удалён с сервера.
-            b.Ne(x => x.Status, KeyStatuses.Revoked)
+            b.Nin(x => x.Status, new[] { KeyStatuses.Revoked, KeyStatuses.Detached })
         };
 
         if (protocolId is not null)
@@ -200,11 +221,11 @@ public class VpnClientRepository : IVpnClientRepository
     {
         var b = Builders<VpnClient>.Filter;
 
-        // Всё, кроме отозванных: у suspended, expired и pendingRevoke peer
-        // на узле ещё жив, и трафик по нему считать надо.
+        // Detached keys are history only; their node is no longer managed.
+        // Suspended, expired and pendingRevoke still need traffic accounting.
         return _collection.Find(b.And(
                 b.Eq(x => x.ServerId, serverId),
-                b.Ne(x => x.Status, KeyStatuses.Revoked)))
+                b.Nin(x => x.Status, new[] { KeyStatuses.Revoked, KeyStatuses.Detached })))
             .ToListAsync(ct);
     }
 

@@ -30,6 +30,7 @@ export const keyStatus: Record<KeyStatus, { label: string; tone: TagTone }> = {
   expired: { label: 'истёк', tone: 'outline' },
   suspended: { label: 'приостановлен', tone: 'outline' },
   pendingRevoke: { label: 'отзывается', tone: 'outline' },
+  detached: { label: 'узел удалён', tone: 'outline' },
 };
 
 export const userStatus: Record<UserStatus, { label: string; tone: TagTone }> = {

@@ -117,6 +117,12 @@ public class VpnClient
     [BsonElement("revokedAt")]
     public DateTime? RevokedAt { get; set; }
 
+    [BsonElement("detachedAt"), BsonIgnoreIfNull]
+    public DateTime? DetachedAt { get; set; }
+
+    [BsonElement("detachedByUserId"), BsonIgnoreIfNull]
+    public string? DetachedByUserId { get; set; }
+
     [BsonElement("revokedByUserId")]
     public string? RevokedByUserId { get; set; }
 

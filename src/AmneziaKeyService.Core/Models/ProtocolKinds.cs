@@ -78,6 +78,8 @@ public static class KeyStatuses
     public const string Revoked   = "revoked";
     public const string Expired   = "expired";
     public const string Suspended = "suspended";
+    /// <summary>Узел удалён из панели без подтверждённого отзыва доступа на сервере.</summary>
+    public const string Detached = "detached";
 
     /// <summary>
     /// Отзыв запрошен, но peer на сервере ещё не удалён (SSH был недоступен).
@@ -86,7 +88,7 @@ public static class KeyStatuses
     /// </summary>
     public const string PendingRevoke = "pendingRevoke";
 
-    public static readonly string[] All = [Active, Revoked, Expired, Suspended, PendingRevoke];
+    public static readonly string[] All = [Active, Revoked, Expired, Suspended, PendingRevoke, Detached];
 }
 
 /// <summary>Откуда пришёл ключ.</summary>

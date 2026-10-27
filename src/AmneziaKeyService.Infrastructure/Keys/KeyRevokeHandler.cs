@@ -51,6 +51,11 @@ public class KeyRevokeHandler : IDomainEventHandler
     {
         var payload = evt.PayloadAs<KeyRevokePayload>();
 
+        // A queued request can outlive deletion of its node and all local keys.
+        // There is nothing left to revoke through the panel; do not retry or claim remote revocation.
+        if (await _clients.FindByIdAsync(payload.KeyId, ct) is null)
+            return new BsonDocument { ["keyId"] = payload.KeyId, ["status"] = "deleted" };
+
         var client = await _vpnConfig.RevokeAsync(
             payload.KeyId, payload.Reason, payload.RevokedByUserId, ct);
 
@@ -63,12 +68,14 @@ public class KeyRevokeHandler : IDomainEventHandler
         // механизм повтора поверх уже существующего незачем.
         var stuck = client.Status == KeyStatuses.PendingRevoke;
 
-        await _audit.WriteAsync(AuditEvents.KeyRevoked,
-            stuck
+        await _audit.WriteAsync(client.Status == KeyStatuses.Detached ? "key.revoke_skipped" : AuditEvents.KeyRevoked,
+            client.Status == KeyStatuses.Detached
+                ? $"Отзыв ключа {client.ShortId} пропущен: узел удалён из панели, отзыв доступа не подтверждён"
+                : stuck
                 ? $"Ключ {client.ShortId} помечен к отзыву, но узел «{server?.Name}» недоступен — peer ещё активен"
                 : $"Отозван ключ {client.ShortId} на узле «{server?.Name}»",
             actor, AuditTargets.Key, client.Id, client.ShortId,
-            stuck ? AuditLevels.Warn : AuditLevels.Info,
+            stuck || client.Status == KeyStatuses.Detached ? AuditLevels.Warn : AuditLevels.Info,
             payload.Comment is { } comment ? new Dictionary<string, string> { ["comment"] = comment } : null,
             ct);
 

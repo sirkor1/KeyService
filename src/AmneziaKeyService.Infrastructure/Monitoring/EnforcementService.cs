@@ -107,6 +107,9 @@ public class EnforcementService : PeriodicWorker
             var result = await services.GetRequiredService<IVpnConfigService>()
                 .RevokeAsync(client.Id, reason, revokedByUserId: null, ct);
 
+            // The server may have been forgotten since this batch was read.
+            if (result.Status == KeyStatuses.Detached) return;
+
             if (result.Status == KeyStatuses.PendingRevoke)
             {
                 // Узел недоступен, peer жив. Повторим на следующем тике —

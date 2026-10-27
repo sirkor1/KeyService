@@ -24,6 +24,7 @@ const STATUS_TABS = [
   { value: 'active', label: 'активен' },
   { value: 'revoked', label: 'отозван' },
   { value: 'expired', label: 'истёк' },
+  { value: 'detached', label: 'узел удалён' },
 ];
 
 function buildColumns(
@@ -43,8 +44,8 @@ function buildColumns(
       align: 'right',
       noEllipsis: true,
       render: (row) =>
-        // Отозванный ключ отзывать нечего, скачивать тоже: конфиг стёрт.
-        row.status === 'revoked' ? (
+        // Historical keys no longer have exportable secrets or a managed peer.
+        row.status === 'revoked' || row.status === 'detached' ? (
           <span>—</span>
         ) : (
           <>
