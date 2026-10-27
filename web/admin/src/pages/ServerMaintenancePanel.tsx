@@ -8,6 +8,7 @@ import { useAuth } from '@/auth/AuthProvider';
 import { Btn } from '@/components/Btn';
 import { Dialog } from '@/components/Dialog';
 import { ErrorBanner, SectionTitle } from '@/components/Misc';
+import styles from './ServerMaintenancePanel.module.css';
 
 export function ServerMaintenancePanel({ server }: { server: ServerDetail }) {
   const { can } = useAuth();
@@ -27,7 +28,7 @@ export function ServerMaintenancePanel({ server }: { server: ServerDetail }) {
   });
   if (!can('panel:admin')) return null;
   const open = (value: 'cleanup' | 'delete') => { setConfirmation(''); setForgetKeys(false); operation.reset(); setAction(value); };
-  return <section>
+  return <section className={styles.section}>
     <SectionTitle>Очистка и удаление узла</SectionTitle>
     <p>Очистка удаляет зарегистрированные VPN-контейнеры и отключает все их ключи, включая подключения, созданные вне панели. Карточка узла и SSH-доступ сохраняются.</p>
     <p>Удаление записи убирает узел и все выданные им ключи из базы без подключения к серверу. Если отозвать ключи невозможно, можно подтвердить удаление без отзыва доступа.</p>
