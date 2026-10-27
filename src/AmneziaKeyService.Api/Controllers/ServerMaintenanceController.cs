@@ -29,4 +29,4 @@ public class ServerMaintenanceController(ServerMaintenanceService maintenance) :
     }
 }
 
-public record ServerMaintenanceRequest([property: Required] string ConfirmationName);
+public record ServerMaintenanceRequest([Required] string ConfirmationName);

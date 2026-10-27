@@ -7,6 +7,13 @@ using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.Install;
 using AmneziaKeyService.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Abstractions;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -16,6 +23,23 @@ void Check(bool ok, string label) { if (!ok) throw new Exception(label); checks+
 async Task Reject(Func<Task> action, string label) {
     try { await action(); } catch (BadRequestException) { Check(true, label); return; }
     throw new Exception("Accepted: " + label);
+}
+
+// Exercise the MVC visitor used before either controller action runs. Calling
+// EnqueueAsync directly cannot detect invalid record validation metadata.
+var mvcServices = new ServiceCollection();
+mvcServices.AddLogging();
+mvcServices.AddControllers().AddApplicationPart(typeof(ServerMaintenanceController).Assembly);
+using (var provider = mvcServices.BuildServiceProvider()) {
+    var validator = provider.GetRequiredService<IObjectModelValidator>();
+    foreach (var (name, valid) in new (string?, bool)[] { ("Test node", true), ("", false), ("  ", false), (null, false) }) {
+        var context = new ActionContext(new DefaultHttpContext { RequestServices = provider },
+            new RouteData(), new ActionDescriptor(), new ModelStateDictionary());
+        validator.Validate(context, null, "", new ServerMaintenanceRequest(name!));
+        Check(context.ModelState.IsValid == valid, "MVC confirmation validation: " + (name is null ? "null" : $"'{name}'"));
+        if (!valid) Check(context.ModelState.ContainsKey(nameof(ServerMaintenanceRequest.ConfirmationName)),
+            "MVC validation error identifies confirmation field");
+    }
 }
 
 var f = new Fixture();
