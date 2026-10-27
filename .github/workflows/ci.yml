@@ -63,7 +63,10 @@ jobs:
 
   event-bus:
     name: Mongo event bus integration
-    runs-on: ubuntu-24.04
+    # Temporary: MongoDB 8 aborts on the newer ubuntu-24.04 runner kernels
+    # (SERVER-121912 / SERVER-131779). ubuntu-22.04 currently uses kernel 6.8.
+    # Return to 24.04 after a compatible official MongoDB 8 image is verified.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     services:
       mongo:
