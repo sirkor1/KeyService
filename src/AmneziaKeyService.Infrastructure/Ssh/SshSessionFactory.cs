@@ -39,7 +39,12 @@ public class SshSessionFactory : ISshSessionFactory
 
         try
         {
-            await Task.Run(() => ssh.Connect(), ct);
+            await ssh.ConnectAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            ssh.Dispose();
+            throw;
         }
         catch (Exception ex)
         {

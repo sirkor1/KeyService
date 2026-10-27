@@ -14,6 +14,10 @@ public interface IVpnClientRepository
     Task CreateAsync(VpnClient client, CancellationToken ct = default);
     Task UpdateAsync(VpnClient client, CancellationToken ct = default);
 
+    /// <summary>Called only after the protocol container is confirmed absent. Keeps key history.</summary>
+    Task RevokeRemovedProtocolAsync(string serverId, string protocolId, bool includeLegacy,
+        string? actorUserId, CancellationToken ct = default);
+
     /// <summary>Максимальный из уже назначенных tunnel-IP для конкретного сервера.</summary>
     Task<string?> GetMaxAssignedIpAsync(string serverId, CancellationToken ct = default);
 

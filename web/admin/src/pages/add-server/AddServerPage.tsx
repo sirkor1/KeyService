@@ -5,7 +5,7 @@ import { ApiError } from '@/api/client';
 import { jobs as jobsApi, servers as serversApi } from '@/api/endpoints';
 import { qk } from '@/api/queryKeys';
 import type { ConnectionTest } from '@/api/types';
-import { Btn } from '@/components/Btn';
+import { Btn, BtnLink } from '@/components/Btn';
 import { ErrorBanner } from '@/components/Misc';
 import { PageHeader } from '@/components/PageHeader';
 import { Spinner } from '@/components/Spinner';
@@ -170,6 +170,9 @@ export function AddServerPage() {
         }
       />
 
+      {!jobId && <p className={styles.hint}>VPN уже работает на сервере?{' '}
+        <BtnLink to="/servers/import" variant="secondary">Подключить существующий</BtnLink>
+      </p>}
       <Stepper current={currentStep} maxReached={jobId ? 4 : maxReached} onGoTo={goTo} disabled={connectionTest.isPending || install.isPending || Boolean(jobId)} />
 
       <div className={styles.columns}>

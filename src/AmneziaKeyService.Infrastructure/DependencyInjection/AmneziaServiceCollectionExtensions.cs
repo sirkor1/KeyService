@@ -164,6 +164,8 @@ public static class AmneziaServiceCollectionExtensions
     {
         services.AddScoped<ISshSessionFactory, SshSessionFactory>();
         services.AddScoped<IServerParamsService, ServerParamsService>();
+        services.AddScoped<ServerImportService>();
+        services.AddScoped<ServerMaintenanceService>();
 
         return services;
     }

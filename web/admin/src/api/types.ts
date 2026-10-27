@@ -59,7 +59,7 @@ export interface LoginResponse {
 
 // ── Серверы ────────────────────────────────────────────────────────────────
 
-export type ServerStatus = 'ok' | 'setup' | 'offline' | 'error';
+export type ServerStatus = 'ok' | 'setup' | 'offline' | 'error' | 'empty';
 export type ProtocolKind = 'awg3' | 'awg2' | 'awg' | 'wireguard' | 'xray';
 export type ProtocolState = 'installed' | 'installing' | 'failed' | 'absent';
 export type SshAuthType = 'password' | 'privateKey' | 'agent';

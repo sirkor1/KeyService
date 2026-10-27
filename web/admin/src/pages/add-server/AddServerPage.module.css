@@ -54,6 +54,13 @@
 
 /* ── Раскладка ──────────────────────────────────────────────────────────── */
 
+.importFields {
+  border: 0;
+  padding: 0;
+  margin: 0 0 var(--space-6);
+  min-inline-size: 0;
+}
+
 .columns {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 380px);

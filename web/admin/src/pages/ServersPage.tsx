@@ -106,9 +106,14 @@ export function ServersPage() {
         kicker="Инфраструктура"
         title="Активные серверы"
         actions={
-          <BtnLink to="/servers/add" variant="primary">
-            Добавить сервер
-          </BtnLink>
+          <>
+            <BtnLink to="/servers/import" variant="secondary">
+              Подключить существующий
+            </BtnLink>
+            <BtnLink to="/servers/add" variant="primary">
+              Добавить сервер
+            </BtnLink>
+          </>
         }
       />
 

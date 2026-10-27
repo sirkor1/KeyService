@@ -5,6 +5,7 @@ import { KeysPage } from '@/pages/KeysPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { AddServerPage } from '@/pages/add-server/AddServerPage';
+import { ImportServerPage } from '@/pages/add-server/ImportServerPage';
 import { IssueKeyPage } from '@/pages/IssueKeyPage';
 import { ServerDetailPage } from '@/pages/ServerDetailPage';
 import { ServersPage } from '@/pages/ServersPage';
@@ -30,6 +31,7 @@ export const router = createBrowserRouter([
       // Статический сегмент объявлен раньше параметра, иначе «add»
       // будет разобран как идентификатор сервера.
       { path: 'servers/add', element: <AddServerPage /> },
+      { path: 'servers/import', element: <ImportServerPage /> },
       { path: 'servers/:id', element: <ServerDetailPage /> },
 
       { path: 'keys', element: <KeysPage /> },

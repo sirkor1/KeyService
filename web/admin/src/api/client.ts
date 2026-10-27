@@ -148,5 +148,5 @@ export const api = {
   put: <T>(path: string, body?: unknown) =>
     request<T>('PUT', path, body !== undefined ? { body } : {}),
 
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  delete: <T>(path: string, body?: unknown) => request<T>('DELETE', path, body !== undefined ? { body } : {}),
 };

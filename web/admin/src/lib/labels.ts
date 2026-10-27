@@ -10,6 +10,7 @@ import type { AuditLevel, KeyStatus, ProtocolState, ServerStatus, UserRole, User
 export type TagTone = 'neutral' | 'outline' | 'accent';
 
 export const serverStatus: Record<ServerStatus, { label: string; tone: TagTone }> = {
+  empty: { label: 'без протоколов', tone: 'outline' },
   ok: { label: 'работает', tone: 'neutral' },
   setup: { label: 'установка', tone: 'outline' },
   offline: { label: 'недоступен', tone: 'accent' },

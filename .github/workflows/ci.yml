@@ -58,6 +58,8 @@ jobs:
         run: |
           dotnet run --project tools/VerifyProtocols --configuration Release
           dotnet run --project tools/VerifyIpAllocation --configuration Release
+          dotnet run --project tools/VerifyServerImport --configuration Release
+          dotnet run --project tools/VerifyServerMaintenance --configuration Release
 
   event-bus:
     name: Mongo event bus integration
@@ -98,6 +100,12 @@ jobs:
 
       - name: Verify protocol availability persistence
         run: dotnet run --project tools/VerifyProtocols --configuration Release -- --mongo=mongodb://127.0.0.1:27017
+
+      - name: Verify existing server import persistence
+        run: dotnet run --project tools/VerifyServerImport --configuration Release -- --mongo=mongodb://127.0.0.1:27017
+
+      - name: Verify server cleanup and deletion persistence
+        run: dotnet run --project tools/VerifyServerMaintenance --configuration Release -- --mongo=mongodb://127.0.0.1:27017
 
   frontend:
     name: Frontend checks

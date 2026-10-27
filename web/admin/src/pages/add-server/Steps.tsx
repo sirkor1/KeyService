@@ -87,7 +87,11 @@ export function StepAccess({
   test,
   testing,
   onTest,
-}: StepProps & { test: ConnectionTest | null; testing: boolean; onTest: () => void }) {
+  description,
+  testLabel = 'Проверить подключение',
+  canTest = true,
+}: StepProps & { test: ConnectionTest | null; testing: boolean; onTest: () => void;
+  description?: string; testLabel?: string; canTest?: boolean }) {
   const set = (field: keyof Draft) => (value: string) =>
     dispatch({ type: 'set', field, value });
 
@@ -96,8 +100,7 @@ export function StepAccess({
       <h6>SSH-доступ</h6>
 
       <p className={styles.hint}>
-        Панель подключится по SSH и развернёт контейнеры Amnezia самостоятельно. Пароль и приватный
-        ключ шифруются перед сохранением и наружу не отдаются — заменить можно, посмотреть нельзя.
+        {description ?? 'Панель подключится по SSH и развернёт контейнеры Amnezia самостоятельно. Пароль и приватный ключ шифруются перед сохранением и наружу не отдаются — заменить можно, посмотреть нельзя.'}
       </p>
 
       <div className="field">
@@ -140,8 +143,8 @@ export function StepAccess({
       )}
 
       <div className={styles.actions}>
-        <Btn variant="secondary" disabled={testing} onClick={onTest}>
-          {testing ? 'Проверяем…' : 'Проверить подключение'}
+        <Btn variant="secondary" disabled={testing || !canTest} onClick={onTest}>
+          {testing ? 'Проверяем…' : testLabel}
         </Btn>
       </div>
 

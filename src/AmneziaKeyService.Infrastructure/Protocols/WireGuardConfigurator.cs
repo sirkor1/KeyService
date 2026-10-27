@@ -359,7 +359,7 @@ public partial class WireGuardConfigurator : IProtocolConfigurator
 
     // ── Разбор конфига сервера ────────────────────────────────────────────────
 
-    private static AwgObfuscationParams ParseObfuscation(string conf, AwgObfuscationParams? existing)
+    internal static AwgObfuscationParams ParseObfuscation(string conf, AwgObfuscationParams? existing)
     {
         var p = existing ?? new AwgObfuscationParams();
 

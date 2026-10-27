@@ -49,6 +49,8 @@ export interface ServerListParams extends ListParams {
 }
 
 export const servers = {
+  discover: (body: TestConnectionBody) => api.post<ServerDiscovery>('/servers/discover', body),
+  importExisting: (body: ImportServerBody) => api.post<ServerDetail>('/servers/import', body),
   addProtocol: (id: string, body: ProtocolSpecBody) => api.post<JobAccepted>(`/servers/${id}/protocols`, body),
   setProtocolEnabled: (id: string, protocolId: string, enabled: boolean) =>
     api.put<void>(`/servers/${id}/protocols/${protocolId}/availability`, { enabled }),
@@ -63,7 +65,8 @@ export const servers = {
 
   refresh: (id: string) => api.post<ServerDetail>(`/servers/${id}/refresh`),
 
-  delete: (id: string) => api.delete<void>(`/servers/${id}`),
+  delete: (id: string, confirmationName: string) => api.delete<JobAccepted>(`/servers/${id}`, { confirmationName }),
+  cleanup: (id: string, confirmationName: string) => api.post<JobAccepted>(`/servers/${id}/cleanup`, { confirmationName }),
 
   install: (body: CreateServerBody) => api.post<JobAccepted>('/servers/install', body),
 
@@ -78,6 +81,28 @@ export interface ProtocolSpecBody {
   subnetAddress?: string;
   subnetCidr?: string;
   siteName?: string;
+}
+
+export interface DiscoveredProtocol {
+  kind: ProtocolKind;
+  displayName: string;
+  containerName: string;
+  port: string | null;
+  subnet: string | null;
+  peerCount: number;
+  canImport: boolean;
+  error: string | null;
+}
+
+export interface ServerDiscovery {
+  revision: string;
+  protocols: DiscoveredProtocol[];
+  warnings: string[];
+}
+
+export interface ImportServerBody extends Omit<CreateServerBody, 'protocols'> {
+  revision: string;
+  containers: string[];
 }
 
 export interface CreateServerBody {

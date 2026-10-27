@@ -24,6 +24,10 @@ public class InstallJob
     [BsonElement("kind")]
     public string Kind { get; set; } = InstallJobKinds.InstallServer;
 
+    [BsonElement("maintenanceRevision")]
+    [BsonIgnoreIfNull]
+    public string? MaintenanceRevision { get; set; }
+
     /// <summary>Что именно устанавливаем.</summary>
     [BsonElement("spec")]
     public List<ProtocolSpec> Spec { get; set; } = [];
@@ -158,6 +162,9 @@ public class InstallJobLog
 
 public static class InstallJobKinds
 {
+    public const string CleanupServer     = "cleanup_server";
+    public const string DeleteServer      = "delete_server";
+    public static bool IsMaintenance(string kind) => kind is CleanupServer or DeleteServer;
     public const string InstallServer     = "install_server";
     public const string AddProtocol       = "add_protocol";
     public const string ReinstallProtocol = "reinstall_protocol";

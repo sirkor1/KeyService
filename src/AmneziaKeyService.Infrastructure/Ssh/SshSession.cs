@@ -32,8 +32,9 @@ public sealed class SshSession : ISshSession
     {
         using var cmd = _ssh.CreateCommand(command);
 
-        // SSH.NET синхронный: уводим в пул, чтобы не занимать поток запроса.
-        await Task.Run(() => cmd.Execute(), ct);
+        // Task.Run with a token only cancels a queued task. Use SSH.NET's async
+        // operation so discovery deadlines and request cancellation stop active reads.
+        await cmd.ExecuteAsync(ct);
 
         return new SshResult(cmd.ExitStatus ?? -1, cmd.Result, cmd.Error);
     }

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { ServerMaintenancePanel } from './ServerMaintenancePanel';
 import { ProtocolInstallPanel } from './ProtocolInstallPanel';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/auth/AuthProvider';
 import { ApiError } from '@/api/client';
@@ -8,7 +8,6 @@ import { servers } from '@/api/endpoints';
 import { qk } from '@/api/queryKeys';
 import type { KeyListItem, ProtocolDetail } from '@/api/types';
 import { Btn, BtnLink, cx } from '@/components/Btn';
-import { ConfirmDialog } from '@/components/Dialog';
 import { KpiRow } from '@/components/KpiRow';
 import { DefRow, ErrorBanner, MaskedValue, SectionTitle, Stacked } from '@/components/Misc';
 import { PageHeader } from '@/components/PageHeader';
@@ -131,10 +130,7 @@ function ProtocolCard({ protocol, serverId }: { protocol: ProtocolDetail; server
 
 export function ServerDetailPage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { can } = useAuth();
-  const [confirmDelete, setConfirmDelete] = useState(false);
+
 
   const server = useQuery({
     queryKey: qk.serverDetail(id),
@@ -148,26 +144,12 @@ export function ServerDetailPage() {
     enabled: Boolean(id),
   });
 
-  const deleteServer = useMutation({
-    mutationFn: () => servers.delete(id),
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: qk.serverDetail(id) });
-      void queryClient.invalidateQueries({ queryKey: qk.servers });
-      void queryClient.invalidateQueries({ queryKey: qk.dashboard });
-      navigate('/servers', { replace: true });
-    },
-  });
-
   if (server.isPending) return <Spinner />;
   if (server.isError || !server.data) {
     return <ErrorBanner message="Сервер не найден или недоступен." onRetry={() => void server.refetch()} />;
   }
 
   const s = server.data;
-  const canDeleteFailedInstall = s.status === 'error' && s.kpi.keysActive === 0 && can('panel:write');
-  const deleteError = deleteServer.error instanceof ApiError
-    ? deleteServer.error.message
-    : 'Не удалось удалить запись незавершённой установки.';
 
   return (
     <>
@@ -180,11 +162,6 @@ export function ServerDetailPage() {
           <BtnLink to="/keys/issue" variant="secondary">
             Выдать ключ
           </BtnLink>
-          {canDeleteFailedInstall ? (
-            <Btn variant="ghost" onClick={() => setConfirmDelete(true)}>
-              Удалить запись установки
-            </Btn>
-          ) : null}
         </>}
       />
 
@@ -279,25 +256,7 @@ export function ServerDetailPage() {
         )}
       </section>
 
-      {confirmDelete ? (
-        <ConfirmDialog
-          title={`Удалить запись «${s.name}»?`}
-          body={<>
-            <p>
-              Будет удалена только незавершённая запись узла из панели. Контейнеры,
-              файлы и настройки на сервере не удаляются.
-            </p>
-            {deleteServer.isError ? <ErrorBanner message={deleteError} /> : null}
-          </>}
-          confirmLabel="Удалить запись"
-          busy={deleteServer.isPending}
-          onConfirm={() => deleteServer.mutate()}
-          onCancel={() => {
-            deleteServer.reset();
-            setConfirmDelete(false);
-          }}
-        />
-      ) : null}
+      <ServerMaintenancePanel server={s} />
     </>
   );
 }

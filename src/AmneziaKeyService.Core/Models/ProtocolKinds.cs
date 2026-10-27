@@ -62,12 +62,13 @@ public static class ProtocolStates
 /// <summary>Статус узла. Соответствует тегам «работает / установка / недоступен» в макете.</summary>
 public static class ServerStatuses
 {
+    public const string Empty   = "empty";
     public const string Ok      = "ok";
     public const string Setup   = "setup";
     public const string Offline = "offline";
     public const string Error   = "error";
 
-    public static readonly string[] All = [Ok, Setup, Offline, Error];
+    public static readonly string[] All = [Ok, Setup, Offline, Error, Empty];
 }
 
 /// <summary>Статус выданного ключа.</summary>

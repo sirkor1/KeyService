@@ -17,15 +17,18 @@ public class InstallEventHandler : IDomainEventHandler
 {
     private readonly IInstallJobRepository _jobs;
     private readonly InstallOrchestrator _orchestrator;
+    private readonly ServerMaintenanceService _maintenance;
     private readonly ILogger<InstallEventHandler> _logger;
 
     public InstallEventHandler(
         IInstallJobRepository jobs,
         InstallOrchestrator orchestrator,
+        ServerMaintenanceService maintenance,
         ILogger<InstallEventHandler> logger)
     {
         _jobs         = jobs;
         _orchestrator = orchestrator;
+        _maintenance = maintenance;
         _logger       = logger;
     }
 
@@ -62,7 +65,8 @@ public class InstallEventHandler : IDomainEventHandler
         // и узел. Поэтому неудачная установка — это успешно доставленное
         // и исполненное событие с неуспешной задачей, а не провал события.
         // Событие отвечает за доставку, задача — за то, что видит оператор.
-        await _orchestrator.ExecuteAsync(job, ct);
+        if (InstallJobKinds.IsMaintenance(job.Kind)) await _maintenance.ExecuteAsync(job, ct);
+        else await _orchestrator.ExecuteAsync(job, ct);
 
         return new BsonDocument { ["jobId"] = jobId, ["jobStatus"] = job.Status };
     }
@@ -83,7 +87,9 @@ public class InstallEventHandler : IDomainEventHandler
             "Помечаю задачу установки {JobId} прерванной: {Error}", jobId, error);
 
         job.Status     = InstallJobStatuses.Failed;
-        job.Error      = "Установка прервана: исполнитель перестал отвечать. Запустите её заново.";
+        job.Error      = InstallJobKinds.IsMaintenance(job.Kind)
+            ? "Операция прервана: исполнитель перестал отвечать. Проверьте узел перед повторным запуском; часть контейнеров могла быть удалена."
+            : "Установка прервана: исполнитель перестал отвечать. Запустите её заново.";
         job.FinishedAt = DateTime.UtcNow;
 
         var step = job.Step(job.CurrentStepCode ?? string.Empty);

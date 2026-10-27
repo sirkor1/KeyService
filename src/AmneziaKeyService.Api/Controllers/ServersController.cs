@@ -365,40 +365,6 @@ public class ServersController : ControllerBase
         return Ok(ServerDetailDto.From(server, await BuildKpiAsync(server.Id, ct)));
     }
 
-    [HttpDelete("{id}")]
-    [ProducesResponseType(StatusCodes.Status204NoContent)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(string id, CancellationToken ct)
-    {
-        var server = await _servers.GetByIdAsync(id, ct)
-            ?? throw new NotFoundException("Сервер не найден.");
-
-        // DELETE only removes the panel record. Keep it limited to a failed
-        // install until a teardown job can remove remote containers safely.
-        if (server.Status != ServerStatuses.Error)
-            throw new BadRequestException(
-                "Удалить можно только запись узла с ошибкой установки. " +
-                "Рабочие и устанавливаемые узлы остаются в панели.");
-
-        var activeKeys = await _clients.SearchAsync(
-            new KeyQuery(ServerId: id, Status: KeyStatuses.Active, PageSize: 1), ct);
-        if (activeKeys.Total > 0)
-            throw new BadRequestException(
-                $"На узле есть активные ключи ({activeKeys.Total}). " +
-                "Сначала отзовите их, затем повторите удаление.");
-
-        await _servers.DeleteAsync(id, ct);
-
-        // Удаление контейнеров и отзыв ключей появятся в фазе 4 — пока
-        // предупреждаем оператора записью в журнал.
-        await _audit.WriteAsync(AuditEvents.ServerDeleted,
-            $"Удалён узел «{server.Name}» ({server.Host}). Контейнеры на самом узле не тронуты.",
-            User, AuditTargets.Server, id, server.Name, AuditLevels.Warn, ct: ct);
-
-        return NoContent();
-    }
-
     /// <summary>Принудительно перечитать параметры протокола с узла по SSH.</summary>
     [HttpPost("{id}/refresh")]
     [HttpPost("{id}/refresh-cache")]

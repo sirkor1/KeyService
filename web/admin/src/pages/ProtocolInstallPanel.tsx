@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '@/api/client';
 import { jobs, servers, type ProtocolSpecBody } from '@/api/endpoints';
@@ -18,6 +18,7 @@ const terminal = (status?: string) => status === 'succeeded' || status === 'fail
 export function ProtocolInstallPanel({ server }: { server: ServerDetail }) {
   const { can } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const jobId = params.get('job');
   const [open, setOpen] = useState(false);
@@ -38,9 +39,18 @@ export function ProtocolInstallPanel({ server }: { server: ServerDetail }) {
   });
   useEffect(() => {
     if (!terminal(job.data?.status)) return;
-    void queryClient.invalidateQueries({ queryKey: qk.serverDetail(server.id) });
+    if (job.data?.kind === 'delete_server' && job.data.status === 'succeeded') {
+      queryClient.removeQueries({ queryKey: qk.serverDetail(server.id) });
+      navigate('/servers', { replace: true });
+    } else {
+      void queryClient.invalidateQueries({ queryKey: qk.serverDetail(server.id) });
+    }
     void queryClient.invalidateQueries({ queryKey: qk.servers });
-  }, [job.data?.status, server.id, queryClient]);
+    void queryClient.invalidateQueries({ queryKey: qk.serverKeys(server.id) });
+    void queryClient.invalidateQueries({ queryKey: qk.keys });
+    void queryClient.invalidateQueries({ queryKey: qk.users });
+    void queryClient.invalidateQueries({ queryKey: qk.dashboard });
+  }, [job.data?.status, job.data?.kind, server.id, queryClient, navigate]);
 
   const install = useMutation({
     mutationFn: () => {
@@ -61,10 +71,13 @@ export function ProtocolInstallPanel({ server }: { server: ServerDetail }) {
       setKind(available[0]!); setPort(''); setSubnet(''); install.reset(); setOpen(true);
     }}>Добавить / обновить протокол</Btn>}
     {jobId && <div aria-live="polite">
-      {job.isPending && <p>Загрузка установки…</p>}
-      {job.isError && <ErrorBanner message="Не удалось загрузить установку." onRetry={() => void job.refetch()} />}
+      {job.isPending && <p>Загрузка операции…</p>}
+      {job.isError && <ErrorBanner message="Не удалось загрузить операцию." onRetry={() => void job.refetch()} />}
       {job.data && <>
-        <p>{job.data.status === 'succeeded' ? 'Протокол установлен. Существующие ключи сохранены.' :
+        <p>{job.data.kind === 'cleanup_server' || job.data.kind === 'delete_server' ?
+          job.data.status === 'succeeded' ? (job.data.kind === 'cleanup_server' ? 'VPN очищен. Можно установить протоколы заново.' : 'Запись узла удалена.') :
+          terminal(job.data.status) ? 'Операция не завершена. Проверьте состояние узла; часть контейнеров могла быть удалена.' : 'Выполняется операция над узлом…' :
+          job.data.status === 'succeeded' ? 'Протокол установлен. Существующие ключи сохранены.' :
           job.data.status === 'failed' || job.data.status === 'canceled' ? 'Установка не завершена. Прежние протоколы сохранены.' : 'Установка нового протокола…'}</p>
         <InstallChecklist job={job.data} />
         {job.data.error && <ErrorBanner message={job.data.error} />}

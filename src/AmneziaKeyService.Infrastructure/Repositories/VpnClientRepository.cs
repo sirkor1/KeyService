@@ -49,6 +49,25 @@ public class VpnClientRepository : IVpnClientRepository
         => _collection.ReplaceOneAsync(
             Builders<VpnClient>.Filter.Eq(x => x.Id, client.Id), client, cancellationToken: ct);
 
+    public async Task RevokeRemovedProtocolAsync(string serverId, string protocolId, bool includeLegacy,
+        string? actorUserId, CancellationToken ct = default)
+    {
+        var b = Builders<VpnClient>.Filter;
+        var protocol = b.Eq(x => x.ProtocolId, protocolId);
+        if (includeLegacy) protocol |= b.Eq(x => x.ProtocolId, null);
+        var scope = b.Eq(x => x.ServerId, serverId) & protocol;
+        await _collection.UpdateManyAsync(scope &
+            b.Ne(x => x.Status, KeyStatuses.Revoked), Builders<VpnClient>.Update
+                .Set(x => x.Status, KeyStatuses.Revoked).Set(x => x.IsActive, false)
+                .Set(x => x.RevokedAt, DateTime.UtcNow).Set(x => x.RevokedByUserId, actorUserId)
+                .Set(x => x.RevokeReason, "server_cleanup"), cancellationToken: ct);
+        // Also erase secrets retained by older revocation implementations, without
+        // rewriting their historical revocation timestamp or actor.
+        await _collection.UpdateManyAsync(scope, Builders<VpnClient>.Update
+                .Set(x => x.IsActive, false).Set(x => x.ClientPrivKey, null).Set(x => x.PskKey, null)
+                .Set(x => x.XrayClientId, null).Set(x => x.VpnConfigJson, null), cancellationToken: ct);
+    }
+
     public async Task<string?> GetMaxAssignedIpAsync(string serverId, CancellationToken ct = default)
     {
         var ips = await GetAssignedIpsAsync(serverId, null, ct);
