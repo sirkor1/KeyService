@@ -6,7 +6,7 @@ import { useAuth } from '@/auth/AuthProvider';
 import { ApiError } from '@/api/client';
 import { servers } from '@/api/endpoints';
 import { qk } from '@/api/queryKeys';
-import type { KeyListItem, ProtocolDetail } from '@/api/types';
+import type { KeyListItem, ProtocolDetail, XCoreInfo } from '@/api/types';
 import { Btn, BtnLink, cx } from '@/components/Btn';
 import { KpiRow } from '@/components/KpiRow';
 import { DefRow, ErrorBanner, MaskedValue, SectionTitle, Stacked } from '@/components/Misc';
@@ -14,9 +14,10 @@ import { PageHeader } from '@/components/PageHeader';
 import { Spinner } from '@/components/Spinner';
 import { StatusTag, Tag } from '@/components/Tag';
 import { Table, type Column } from '@/components/Table';
-import { formatBytes, formatDate, formatPercent, joinMeta } from '@/lib/format';
+import { formatBytes, formatDate, formatLogTime, formatPercent, joinMeta } from '@/lib/format';
 import { keyStatus, protocolState, serverStatus, sshAuthType } from '@/lib/labels';
 import { hasTrafficStats, NO_TRAFFIC_STATS_HINT } from '@/lib/protocols';
+import { XCoreExits, XCoreRfLists, XCoreSettings } from './XCoreSettings';
 import styles from './ServerDetailPage.module.css';
 
 const keyColumns: Column<KeyListItem>[] = [
@@ -68,6 +69,37 @@ const keyColumns: Column<KeyListItem>[] = [
   },
 ];
 
+const XCORE_ROLE: Record<string, string> = { exit: 'выход', entry: 'вход' };
+
+/**
+ * Состояние подписочного узла. Ошибка синхронизации выводится предупреждением, а не строкой
+ * в ряду мелких данных: пока она есть, отзыв или выдача могли не дойти до узла.
+ */
+function XCoreStatus({ protocol, info, serverId }: { protocol: ProtocolDetail; info: XCoreInfo; serverId: string }) {
+  // Тот же признак, что у бэкенда: узел включён в подписки и работает (вход и выход).
+  const inSubscriptions = info.subscriptionEnabled && protocol.enabled;
+
+  return (
+    <>
+      <div className={styles.protocolMeta}>
+        {joinMeta(
+          `в подписках: ${inSubscriptions ? 'да' : 'нет'}`,
+          info.role === 'exit'
+            ? info.routeId !== null ? `маршрут №${info.routeId}` : 'номер маршрута ещё не назначен'
+            : null,
+          info.appliedAt ? `применено ${formatLogTime(info.appliedAt)}` : 'ещё не применялось',
+        )}
+      </div>
+      {info.syncError ? (
+        <ErrorBanner message={`Узел не принял последнее изменение подписчиков: ${info.syncError}`} />
+      ) : null}
+      {info.role === 'entry' ? <XCoreExits info={info} /> : null}
+      {info.role === 'entry' ? <XCoreRfLists serverId={serverId} protocolId={protocol.id} info={info} /> : null}
+      <XCoreSettings serverId={serverId} protocolId={protocol.id} info={info} />
+    </>
+  );
+}
+
 function ProtocolCard({ protocol, serverId }: { protocol: ProtocolDetail; serverId: string }) {
   const { can } = useAuth();
   const queryClient = useQueryClient();
@@ -78,7 +110,10 @@ function ProtocolCard({ protocol, serverId }: { protocol: ProtocolDetail; server
       await queryClient.invalidateQueries({ queryKey: qk.servers });
     },
   });
-  const meta = protocol.xray
+  const xcore = protocol.xcore;
+  const meta = xcore
+    ? joinMeta(`домен ${xcore.domain}`, `роль: ${XCORE_ROLE[xcore.role] ?? xcore.role}`, `порт ${protocol.port}/${protocol.transportProto}`)
+    : protocol.xray
     ? joinMeta(
         `порт ${protocol.port}/${protocol.transportProto}`,
         `SNI ${protocol.xray.siteName}`,
@@ -102,14 +137,22 @@ function ProtocolCard({ protocol, serverId }: { protocol: ProtocolDetail; server
 
       <div className={styles.protocolMeta}>{meta}</div>
       <div className={styles.protocolHead}>
-        <Tag tone="outline">{protocol.enabled ? 'Выдача ключей включена' : 'Новые ключи не выдаются'}</Tag>
+        <Tag tone="outline">
+          {xcore
+            ? protocol.enabled ? 'Узел включён' : 'Узел отключён'
+            : protocol.enabled ? 'Выдача ключей включена' : 'Новые ключи не выдаются'}
+        </Tag>
         {can('panel:admin') && protocol.state === 'installed' && (
           <Btn variant="ghost" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
-            {protocol.enabled ? 'Отключить выдачу' : 'Включить выдачу'}
+            {xcore
+              ? protocol.enabled ? 'Отключить узел' : 'Включить узел'
+              : protocol.enabled ? 'Отключить выдачу' : 'Включить выдачу'}
           </Btn>
         )}
       </div>
       {toggle.isError && <ErrorBanner message={toggle.error instanceof ApiError ? toggle.error.message : 'Не удалось изменить доступность.'} />}
+
+      {xcore ? <XCoreStatus protocol={protocol} info={xcore} serverId={serverId} /> : null}
 
       <div className={cx(styles.protocolContainer, 'mono')}>
         {joinMeta(protocol.containerName, protocol.containerVersion)}

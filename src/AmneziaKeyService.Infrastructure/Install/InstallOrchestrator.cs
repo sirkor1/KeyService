@@ -2,6 +2,8 @@ using System.Text.RegularExpressions;
 using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.Extensions.Logging;
 
 namespace AmneziaKeyService.Infrastructure.Install;
@@ -28,6 +30,7 @@ public partial class InstallOrchestrator
     private readonly IProtocolRegistry _configurators;
     private readonly Scripts.ScriptRegistry _scripts;
     private readonly ILogger<InstallOrchestrator> _logger;
+    private readonly XCoreSyncPublisher _xcoreSync;
 
     public InstallOrchestrator(
         IVpnServerRepository servers,
@@ -36,7 +39,8 @@ public partial class InstallOrchestrator
         IProtocolInstallerRegistry installers,
         IProtocolRegistry configurators,
         Scripts.ScriptRegistry scripts,
-        ILogger<InstallOrchestrator> logger)
+        ILogger<InstallOrchestrator> logger,
+        XCoreSyncPublisher xcoreSync)
     {
         _servers       = servers;
         _jobs          = jobs;
@@ -45,6 +49,7 @@ public partial class InstallOrchestrator
         _configurators = configurators;
         _scripts       = scripts;
         _logger        = logger;
+        _xcoreSync     = xcoreSync;
     }
 
     public async Task ExecuteAsync(InstallJob job, CancellationToken ct)
@@ -94,6 +99,23 @@ public partial class InstallOrchestrator
             await _jobs.UpdateAsync(job, ct);
 
             await progress.LogAsync("Установка завершена.", ct: ct);
+
+            // Установка кладёт на узел конфиг без пользователей, и сам он подписчиков не получит. А
+            // новый выход меняет конфиги входов, новый вход — список служебных пользователей на
+            // выходах, поэтому синхронизируются все узлы xcore, а не только этот. Задача уже успешна,
+            // поэтому токен отмены не передаём: отмена здесь пометила бы её отменённой. Сбой
+            // публикации не бросается — узлы подхватит периодическая сверка.
+            if (installed.Any(p => p.Kind == ProtocolKinds.XCore))
+            {
+                await _xcoreSync.PublishForAllAsync(job.CreatedByUserId, CancellationToken.None);
+
+                // Первичная загрузка российских списков для нового входа — отдельным событием после
+                // установки: её сбой (узел не дотянулся до GitHub) установку не проваливает, вход работает
+                // на встроенных списках образа, а причина видна оператору в GeoError.
+                foreach (var entry in installed.Where(p => p.Kind == ProtocolKinds.XCore && p.XCore?.Role == XCoreRoles.Entry))
+                    await _xcoreSync.PublishGeoUpdateAsync(
+                        server.Id, entry.Id, null, job.CreatedByUserId, CancellationToken.None);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -262,20 +284,30 @@ public partial class InstallOrchestrator
     {
         foreach (var spec in job.Spec.Where(s => s.Port is not null))
         {
-            var result = await ssh.RunAsync(
-                $"sudo ss -H -lntu 'sport = :{spec.Port}'", ct);
+            // xcore занимает два порта и только по TCP: Xray на 443 и Caddy на 80 для ACME.
+            // Выбрать другой порт нельзя, поэтому и подсказка в отказе другая.
+            var isXCore = spec.Kind == ProtocolKinds.XCore;
+            string[] ports = isXCore ? [XCoreNode.HttpsPort, XCoreNode.AcmePort] : [spec.Port!];
+            var sockets = isXCore ? "-lnt" : "-lntu";
 
-            if (!result.Ok) throw new BadRequestException("Не удалось проверить занятость порта на узле.");
-
-            // grep без совпадений возвращает 1 — это и есть «порт свободен».
-            if (result.Ok && !string.IsNullOrWhiteSpace(result.StdOut))
+            foreach (var port in ports)
             {
-                throw new BadRequestException(
-                    $"Порт {spec.Port} на узле уже занят другим процессом. " +
-                    "Освободите его или выберите другой порт.");
-            }
+                var result = await ssh.RunAsync($"sudo ss -H {sockets} 'sport = :{port}'", ct);
 
-            await progress.LogAsync($"Порт {spec.Port} свободен.", ct: ct);
+                if (!result.Ok) throw new BadRequestException("Не удалось проверить занятость порта на узле.");
+
+                // grep без совпадений возвращает 1 — это и есть «порт свободен».
+                if (result.Ok && !string.IsNullOrWhiteSpace(result.StdOut))
+                {
+                    throw new BadRequestException(isXCore
+                        ? $"Порт {port} на узле уже занят другим процессом (веб-сервер, прокси). " +
+                          "xcore нужны порты 443 и 80: освободите их."
+                        : $"Порт {port} на узле уже занят другим процессом. " +
+                          "Освободите его или выберите другой порт.");
+                }
+
+                await progress.LogAsync($"Порт {port} свободен.", ct: ct);
+            }
         }
     }
 
@@ -293,13 +325,34 @@ public partial class InstallOrchestrator
             var installer = _installers.Get(spec.Kind);
             var protocol = await installer.InstallAsync(ssh, server, spec, progress, ct);
 
-            // Сохраняем сразу после каждого протокола: если следующий упадёт,
-            // уже развёрнутый не потеряется и не станет «сиротой» на узле.
+            // Номер маршрута нужен выходу с первой же минуты, но выбирается по всем узлам, а
+            // установщик их не видит. Читаем как можно позже — перед самой записью: два выхода,
+            // ставящихся одновременно на разные узлы, разойдутся только если окажутся здесь в одну
+            // и ту же долю секунды.
+            // Уникальный индекс номера (M017) отсекает проигравшего гонку именно на записи ниже: тогда
+            // берётся следующий свободный номер по свежему снимку, и запись повторяется.
             protocol.State = ProtocolStates.Installing;
-            server.Protocols.Add(protocol);
             server.DefaultProtocolId ??= protocol.Id;
+            for (var attempt = 1; ; attempt++)
+            {
+                if (protocol.XCore is { Role: XCoreRoles.Exit } exit)
+                    exit.RouteId = XCoreRoute.NextFree(
+                        XCoreTopology.UsedRouteIds([.. await _servers.GetAllAsync(ct), server]));
 
-            await _servers.UpdateInstallationAsync(server, ct);
+                // Сохраняем сразу после каждого протокола: если следующий упадёт,
+                // уже развёрнутый не потеряется и не станет «сиротой» на узле.
+                server.Protocols.Add(protocol);
+                try
+                {
+                    await _servers.UpdateInstallationAsync(server, ct);
+                    break;
+                }
+                catch (RouteIdTakenException) when (attempt < XCoreRoute.AssignAttempts)
+                {
+                    server.Protocols.Remove(protocol);
+                }
+            }
+
             installed.Add(protocol);
         }
 
@@ -327,6 +380,10 @@ public partial class InstallOrchestrator
         await progress.DetailAsync("Чтение сгенерированных ключей", ct);
         foreach (var protocol in installed)
         {
+            // У xcore конфигуратора нет: ключи Reality установщик получил и сохранил сам,
+            // а читать у контейнера без shell нечего.
+            if (!_configurators.IsSupported(protocol.Kind)) continue;
+
             var configurator = _configurators.GetConfigurator(protocol.Kind);
             await configurator.EnsureServerParamsAsync(ssh, server, protocol, ct);
         }
@@ -368,6 +425,9 @@ public partial class InstallOrchestrator
                 }
                 if (!ready) throw new BadRequestException("Интерфейс VPN не запустился. Проверьте поддержку параметров протокола и журнал контейнера.");
             }
+
+            if (protocol.XCore is { } xcore)
+                await EnsureXCoreApiRespondsAsync(ssh, xcore, ct);
             protocol.State = ProtocolStates.Installed;
             var version = await ReadContainerVersionAsync(ssh, protocol, ct);
             if (version is not null)
@@ -380,12 +440,45 @@ public partial class InstallOrchestrator
         await _servers.UpdateInstallationAsync(server, ct);
     }
 
+    /// <summary>
+    /// «Контейнер запущен» для xcore мало: Xray мог упасть сразу после старта на конфиге,
+    /// который прошёл <c>run -test</c>. Ответ API статистики подтверждает, что процесс жив
+    /// и inbound поднят. API стартует не мгновенно, поэтому несколько попыток.
+    /// </summary>
+    private static async Task EnsureXCoreApiRespondsAsync(
+        ISshSession ssh, XCoreProtocolParams xcore, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var probe = await ssh.RunAsync(XCoreNode.InboundUserCountCommand(xcore.ApiPort), ct);
+            if (probe.Ok)
+            {
+                try
+                {
+                    XrayApiOutput.ParseInboundUserCount(probe.StdOut);
+                    return;
+                }
+                catch (XrayOutputException)
+                {
+                    // Не JSON: сервер ответил, но не тот. Повторяем, как и при отказе.
+                }
+            }
+            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+        }
+
+        throw new BadRequestException(
+            "API Xray не отвечает. Посмотрите журнал контейнера на узле: docker logs " + XCoreNode.XrayContainer);
+    }
+
     private static async Task<string?> ReadContainerVersionAsync(
         ISshSession ssh, ProtocolInstance protocol, CancellationToken ct)
     {
-        var command = protocol.Kind == ProtocolKinds.Xray
-            ? $"sudo docker exec -i {protocol.ContainerName} xray version"
-            : $"sudo docker exec -i {protocol.ContainerName} {protocol.Wg?.Binary ?? "wg"} --version";
+        var command = protocol.Kind switch
+        {
+            ProtocolKinds.XCore => XCoreNode.VersionCommand,
+            ProtocolKinds.Xray => $"sudo docker exec -i {protocol.ContainerName} xray version",
+            _ => $"sudo docker exec -i {protocol.ContainerName} {protocol.Wg?.Binary ?? "wg"} --version",
+        };
 
         var result = await ssh.RunAsync(command, ct);
         if (!result.Ok) return null;

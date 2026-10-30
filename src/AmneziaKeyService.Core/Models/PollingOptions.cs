@@ -24,6 +24,18 @@ public class PollingOptions
     public int ReconcileIntervalHours { get; set; } = 24;
 
     /// <summary>
+    /// Страховочная сверка подписчиков на узлах xcore: переиздаёт xcore.sync, если событие
+    /// потерялось или узел разошёлся с базой.
+    /// </summary>
+    public int XCoreReconcileIntervalMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Как часто worker смотрит на GitHub, не вышел ли новый релиз российских списков для входов xcore.
+    /// Сам релиз применяется не чаще <c>XCore:RfListsMinAgeDays</c>.
+    /// </summary>
+    public int XCoreGeoIntervalHours { get; set; } = 24;
+
+    /// <summary>
     /// Сколько узлов опрашивается одновременно. Каждый узел — отдельная
     /// SSH-сессия, и на парке в сотню узлов без потолка это сотня
     /// одновременных подключений.

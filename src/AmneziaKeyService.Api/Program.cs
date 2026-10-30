@@ -130,6 +130,10 @@ builder.Services.AddRateLimiter(opts =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+    // Публичная ссылка подписки: токен в пути. Лимит по токену, а не по IP — через прокси входа IP у всех один —
+    // плюс общий лимит на маршрут против перебора.
+    opts.AddPolicy(RateLimitPolicies.Subscription, SubscriptionRateLimiting.TokenPartition);
+    opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(SubscriptionRateLimiting.RoutePartition);
 });
 
 // ── CORS (только для dev: в проде SPA и API за одним nginx) ───────────────────

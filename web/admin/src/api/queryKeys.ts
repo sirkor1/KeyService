@@ -1,4 +1,11 @@
-import type { KeyListParams, LogListParams, NotificationListParams, ServerListParams, UserListParams } from './endpoints';
+import type {
+  KeyListParams,
+  LogListParams,
+  NotificationListParams,
+  ServerListParams,
+  SubscriptionListParams,
+  UserListParams,
+} from './endpoints';
 
 /**
  * Ключи кеша TanStack Query. Собраны в одном месте, чтобы инвалидация
@@ -16,6 +23,11 @@ export const qk = {
   keys: ['keys'] as const,
   keyList: (params: KeyListParams) => ['keys', 'list', params] as const,
   keyDetail: (id: string) => ['keys', 'detail', id] as const,
+
+  subscriptions: ['subscriptions'] as const,
+  subscriptionList: (params: SubscriptionListParams) => ['subscriptions', 'list', params] as const,
+  // Вне префикса subscriptions: ссылка — секрет, и общая инвалидация не должна её перезапрашивать.
+  subscriptionLink: (id: string) => ['subscription-link', id] as const,
 
   users: ['users'] as const,
   userList: (params: UserListParams) => ['users', 'list', params] as const,

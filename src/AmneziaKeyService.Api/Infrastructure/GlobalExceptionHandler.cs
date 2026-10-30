@@ -33,6 +33,8 @@ public class GlobalExceptionHandler : IExceptionHandler
             Instance = context.Request.Path
         };
         problem.Extensions["code"] = code;
+        if (exception is BadRequestException { Field: { } field })
+            problem.Extensions["field"] = field;
 
         context.Response.StatusCode = status;
         await context.Response.WriteAsJsonAsync(problem, ct);

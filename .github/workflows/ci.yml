@@ -45,6 +45,12 @@ jobs:
       - name: Verify monitoring invariants
         run: dotnet run --project tools/VerifyMonitoring/VerifyMonitoring.csproj --configuration Release
 
+      - name: Verify xcore config rendering and Xray output parsing
+        run: dotnet run --project tools/VerifyXCore --configuration Release
+
+      - name: Verify subscriptions (token, links, headers, log redaction)
+        run: dotnet run --project tools/VerifySubscriptions --configuration Release
+
       - name: Verify panel settings invariants
         run: dotnet run --project tools/VerifyPanelSettings/VerifyPanelSettings.csproj --configuration Release
 
@@ -94,6 +100,11 @@ jobs:
       - name: Verify event bus
         run: >-
           dotnet run --project tools/VerifyEvents/VerifyEvents.csproj
+          --configuration Release -- --mongo=mongodb://127.0.0.1:27017
+
+      - name: Verify subscriptions on MongoDB
+        run: >-
+          dotnet run --project tools/VerifySubscriptions
           --configuration Release -- --mongo=mongodb://127.0.0.1:27017
 
       - name: Verify legacy migration

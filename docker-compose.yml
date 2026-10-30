@@ -44,6 +44,26 @@ services:
       # Шифрование SSH-паролей и приватных ключей в MongoDB. Нужен здесь,
       # пока установка и выдача ключа идут в этом процессе.
       - Security__DataProtectionKey=${DATA_PROTECTION_KEY}
+      # Почта для Let's Encrypt на узлах xcore: api отклоняет установку без неё
+      # ещё до постановки задачи, worker подставляет её в Caddy.
+      - XCore__AcmeEmail=${XCORE_ACME_EMAIL}
+      # Куда Caddy входа проксирует /sub/ (публичный адрес API панели). Нужен, чтобы задать входу домен подписки:
+      # api отклоняет домен без этой настройки, worker подставляет адрес в Caddyfile входа.
+      - XCore__SubscriptionUpstream=${XCORE_SUBSCRIPTION_UPSTREAM:-}
+      # Кнопка «Обновить списки сейчас» отклоняется, если российские списки выключены.
+      - XCore__RfListsEnabled=${XCORE_RF_LISTS_ENABLED:-true}
+      # Ссылки подписок Happ: публичный адрес (например, https://sub.example.com) нужен для показа
+      # ссылки в панели; без него подписку создать можно, а ссылку построить нельзя.
+      - Subscription__PublicBaseUrl=${SUBSCRIPTION_PUBLIC_BASE_URL:-}
+      - Subscription__ProfileTitle=${SUBSCRIPTION_PROFILE_TITLE:-VPN}
+      - Subscription__SupportUrl=${SUBSCRIPTION_SUPPORT_URL:-}
+      - Subscription__UpdateIntervalHours=${SUBSCRIPTION_UPDATE_INTERVAL_HOURS:-12}
+      # Профиль маршрутизации Happ (заголовок routing): российские сайты напрямую с устройства. По умолчанию выключен.
+      - Subscription__HappRoutingEnabled=${SUBSCRIPTION_HAPP_ROUTING_ENABLED:-false}
+      - Subscription__HappRoutingName=${SUBSCRIPTION_HAPP_ROUTING_NAME:-RU direct}
+      # Provider ID Happ (заголовок providerid и fallback-url). Пусто — выключено. С ним Happ раз в день шлёт на
+      # check.happ-proxy.com идентификатор устройства (HWID), хеш домена подписки и версию ОС.
+      - Subscription__HappProviderId=${SUBSCRIPTION_HAPP_PROVIDER_ID:-}
       - Seq__ServerUrl=http://seq:5341
       - Seq__ApiKey=${SEQ_API_KEY}
     extra_hosts:
@@ -73,6 +93,16 @@ services:
       # как и миграции. Пароль в api больше не нужен.
       - Admin__Username=${ADMIN_USERNAME}
       - Admin__Password=${ADMIN_PASSWORD}
+      - XCore__AcmeEmail=${XCORE_ACME_EMAIL}
+      # Куда Caddy входа проксирует /sub/ (публичный адрес API панели). Нужен, чтобы задать входу домен подписки:
+      # api отклоняет домен без этой настройки, worker подставляет адрес в Caddyfile входа.
+      - XCore__SubscriptionUpstream=${XCORE_SUBSCRIPTION_UPSTREAM:-}
+      # Российские geo-списки входов (runetfreedom): включение, репозиторий релизов, минимальный возраст релиза в днях
+      # и пауза после неудачного выпуска сертификата домена подписки.
+      - XCore__RfListsEnabled=${XCORE_RF_LISTS_ENABLED:-true}
+      - XCore__RfListsRepo=${XCORE_RF_LISTS_REPO:-runetfreedom/russia-v2ray-rules-dat}
+      - XCore__RfListsMinAgeDays=${XCORE_RF_LISTS_MIN_AGE_DAYS:-7}
+      - XCore__CaddyRetryMinutes=${XCORE_CADDY_RETRY_MINUTES:-60}
       - Seq__ServerUrl=http://seq:5341
       - Seq__ApiKey=${SEQ_API_KEY}
     extra_hosts:
@@ -100,6 +130,9 @@ services:
       # Уйдёт вместе с переносом выдачи на доменные события.
       - Security__DataProtectionKey=${DATA_PROTECTION_KEY}
       - TelegramBot__Token=${TELEGRAM_BOT_TOKEN}
+      # Кнопка «Подписка Happ» собирает ссылку сама, поэтому адрес нужен и здесь, и ровно тот же,
+      # что у api. Остальные Subscription__* бот не читает: они задают заголовки ответа /sub/.
+      - Subscription__PublicBaseUrl=${SUBSCRIPTION_PUBLIC_BASE_URL:-}
       - Seq__ServerUrl=http://seq:5341
       - Seq__ApiKey=${SEQ_API_KEY}
     extra_hosts:

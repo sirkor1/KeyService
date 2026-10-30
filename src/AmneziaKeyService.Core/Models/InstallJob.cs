@@ -101,6 +101,14 @@ public class ProtocolSpec
     [BsonElement("siteName")]
     public string? SiteName { get; set; }
 
+    /// <summary>Домен узла xcore: он же SNI Reality и имя сертификата.</summary>
+    [BsonElement("domain")]
+    public string? Domain { get; set; }
+
+    /// <summary>Роль узла xcore, см. <see cref="XCoreRoles"/>. Пусто — выход.</summary>
+    [BsonElement("role")]
+    public string? Role { get; set; }
+
     /// <summary>Существующий протокол, который переустанавливаем или удаляем.</summary>
     [BsonElement("protocolId")]
     public string? ProtocolId { get; set; }

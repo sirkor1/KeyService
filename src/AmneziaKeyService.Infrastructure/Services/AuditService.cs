@@ -92,6 +92,11 @@ public static class AuditEvents
     public const string KeyRevoked      = "key.revoked";
     public const string KeyRevokeFailed = "key.revoke_failed";
 
+    public const string SubscriptionCreated       = "subscription.created";
+    public const string SubscriptionRevoked       = "subscription.revoked";
+    public const string SubscriptionRegenerated   = "subscription.regenerated";
+    public const string SubscriptionLimitsChanged = "subscription.limits_changed";
+
     public const string PassCodeCreated = "passcode.created";
     public const string PassCodeRevoked = "passcode.revoked";
     public const string PassCodeUsed    = "passcode.used";
@@ -117,4 +122,9 @@ public static class AuditEvents
     public const string KeyExpiringSoon = "key.expiring_soon";
 
     public const string PeersReconciled = "server.peers_reconciled";
+
+    public const string XCoreSettingsChanged = "server.xcore_settings_changed";
+    public const string XCoreRfListsRequested = "server.xcore_rf_lists_requested";
+    public const string XCoreExitDown        = "xcore.exit_down";
+    public const string XCoreExitUp          = "xcore.exit_up";
 }

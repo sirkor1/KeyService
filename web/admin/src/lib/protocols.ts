@@ -1,4 +1,4 @@
-import type { ProtocolKind } from '@/api/types';
+import type { ProtocolKind, XCoreRole } from '@/api/types';
 
 /**
  * Отображаемые названия протоколов. Дублируют ProtocolKinds.DisplayName
@@ -10,7 +10,19 @@ export const ProtocolDisplay: Record<ProtocolKind, string> = {
   awg: 'AmneziaWG 1.0',
   wireguard: 'WireGuard',
   xray: 'VLESS Reality',
+  xcore: 'Xray (подписки)',
 };
+
+/** Название вида в форме установки: оператору важнее назначение, чем имя ядра. */
+export const XCORE_INSTALL_LABEL = 'Xray для подписок Happ';
+
+export const XCORE_ROLE_LABEL: Record<XCoreRole, string> = {
+  exit: 'Выход (за рубежом)',
+  entry: 'Вход (в РФ)',
+};
+
+export const XCORE_ENTRY_HINT =
+  'Вход принимает клиентов в РФ и передаёт трафик на выходы; российские сайты идут напрямую с его IP';
 
 /**
  * Есть ли по протоколу пер-клиентская статистика трафика.

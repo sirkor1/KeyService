@@ -7,12 +7,14 @@ using AmneziaKeyService.Infrastructure.Logging;
 using AmneziaKeyService.Infrastructure.Migrations;
 using AmneziaKeyService.Infrastructure.Monitoring;
 using AmneziaKeyService.Infrastructure.Services;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 // Фоновая часть сервиса: миграции схемы, сидирование владельца и четыре
 // воркера эксплуатации — статистика, здоровье узлов, сроки с квотами и сверка
-// peer-ов.
+// peer-ов — и три воркера xcore: учёт трафика подписчиков, сверка их списка на узлах
+// и обновление российских списков на входах.
 //
 // Отдельный процесс, потому что эта работа не имеет отношения к HTTP: опрос
 // узлов идёт по SSH минутами, а перезапуск ради правки контроллера панели
@@ -41,6 +43,8 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddScoped<IDomainEventHandler, InstallEventHandler>();
         services.AddScoped<IDomainEventHandler, KeyIssueHandler>();
         services.AddScoped<IDomainEventHandler, KeyRevokeHandler>();
+        services.AddScoped<IDomainEventHandler, XCoreSyncHandler>();
+        services.AddScoped<IDomainEventHandler, XCoreGeoUpdateHandler>();
 
         // Порядок важен: миграции применяются до всего остального.
         // Схему правит только этот процесс — api и бот её дожидаются,
@@ -53,6 +57,9 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddHostedService<HealthPollerService>();
         services.AddHostedService<EnforcementService>();
         services.AddHostedService<ReconcileService>();
+        services.AddHostedService<XCoreStatsPoller>();
+        services.AddHostedService<XCoreReconcileService>();
+        services.AddHostedService<XCoreGeoUpdateService>();
     })
     .Build();
 

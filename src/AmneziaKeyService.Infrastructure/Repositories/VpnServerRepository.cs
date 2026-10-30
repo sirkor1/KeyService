@@ -1,4 +1,6 @@
 using AmneziaKeyService.Core.DTOs;
+using AmneziaKeyService.Core.DTOs.Panel;
+using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
 using Microsoft.Extensions.Options;
@@ -113,13 +115,31 @@ public class VpnServerRepository : IVpnServerRepository
                 Builders<VpnServer>.Update.Set(x => x.Status, server.Status), cancellationToken: ct);
     }
 
-    public Task UpdateInstallationAsync(VpnServer server, CancellationToken ct = default)
-        => _collection.UpdateOneAsync(x => x.Id == server.Id,
-            Builders<VpnServer>.Update.Set(x => x.Protocols, server.Protocols)
-                .Set(x => x.DefaultProtocolId, server.DefaultProtocolId)
-                .Set(x => x.Status, server.Status)
-                .Set("ssh.hostFingerprint", server.Ssh.HostFingerprint)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+    public async Task UpdateInstallationAsync(VpnServer server, CancellationToken ct = default)
+    {
+        try
+        {
+            await _collection.UpdateOneAsync(x => x.Id == server.Id,
+                Builders<VpnServer>.Update.Set(x => x.Protocols, server.Protocols)
+                    .Set(x => x.DefaultProtocolId, server.DefaultProtocolId)
+                    .Set(x => x.Status, server.Status)
+                    .Set("ssh.hostFingerprint", server.Ssh.HostFingerprint)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (IsRouteIdConflict(ex))
+        {
+            throw new RouteIdTakenException(ex);
+        }
+    }
+
+    /// <summary>
+    /// Нарушение именно уникального индекса номера маршрута (M017). Других уникальных индексов, по которым
+    /// эти записи могли бы отказать, у коллекции узлов нет, но имя индекса проверяется: чужую ошибку
+    /// дублирования нельзя выдавать за занятый номер и «лечить» повтором.
+    /// </summary>
+    internal static bool IsRouteIdConflict(MongoWriteException ex) =>
+        ex.WriteError.Category == ServerErrorCategory.DuplicateKey
+        && ex.WriteError.Message.Contains("protocols.xcore.routeId", StringComparison.Ordinal);
 
     public Task UpdateMetadataAsync(VpnServer server, CancellationToken ct = default)
         => _collection.UpdateOneAsync(x => x.Id == server.Id,
@@ -142,6 +162,132 @@ public class VpnServerRepository : IVpnServerRepository
             Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocol.Id),
             Builders<VpnServer>.Update.Set("protocols.$.wg", protocol.Wg)
                 .Set("protocols.$.xray", protocol.Xray).Set("protocols.$.lastSyncedAt", protocol.LastSyncedAt), cancellationToken: ct);
+
+    public Task MarkXCoreAppliedAsync(
+        string id, string protocolId, string revision, string structureRevision, DateTime appliedAt,
+        CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.appliedRevision", revision)
+                .Set("protocols.$.xcore.appliedStructureRevision", structureRevision)
+                .Set("protocols.$.xcore.appliedAt", appliedAt)
+                .Set("protocols.$.xcore.syncError", BsonNull.Value), cancellationToken: ct);
+
+    public Task SetXCoreSyncErrorAsync(string id, string protocolId, string error, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.syncError", error), cancellationToken: ct);
+
+    public async Task<bool> SetXCoreRouteIdAsync(string id, string protocolId, int routeId, CancellationToken ct = default)
+    {
+        // «routeId: null» совпадает и с отсутствующим полем: так выглядят выходы, поставленные до C1. Вид
+        // проверяется отдельно: у протокола не xcore поля xcore нет, и условие по номеру прошло бы, а запись
+        // создала бы ему поддокумент xcore.
+        var withoutRoute = Builders<ProtocolInstance>.Filter.Eq(p => p.Id, protocolId)
+            & Builders<ProtocolInstance>.Filter.Eq(p => p.Kind, ProtocolKinds.XCore)
+            & Builders<ProtocolInstance>.Filter.Eq("xcore.routeId", BsonNull.Value);
+        try
+        {
+            var result = await _collection.UpdateOneAsync(
+                Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, withoutRoute),
+                Builders<VpnServer>.Update.Set("protocols.$.xcore.routeId", routeId), cancellationToken: ct);
+            return result.ModifiedCount > 0;
+        }
+        catch (MongoWriteException ex) when (IsRouteIdConflict(ex))
+        {
+            throw new RouteIdTakenException(ex);
+        }
+    }
+
+    public Task MarkXCoreCaddyAppliedAsync(string id, string protocolId, string revision, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.appliedCaddyRevision", revision)
+                .Unset("protocols.$.xcore.caddyFailedRevision")
+                .Unset("protocols.$.xcore.caddyFailedAt"), cancellationToken: ct);
+
+    public Task SetXCoreCaddyFailedAsync(
+        string id, string protocolId, string revision, DateTime failedAt, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.caddyFailedRevision", revision)
+                .Set("protocols.$.xcore.caddyFailedAt", failedAt), cancellationToken: ct);
+
+    public Task MarkXCoreRfListsAppliedAsync(
+        string id, string protocolId, string tag, DateTime at, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.rfListsTag", tag)
+                .Set("protocols.$.xcore.rfListsAppliedAt", at)
+                .Set("protocols.$.xcore.rfListsCheckedAt", at)
+                .Unset("protocols.$.xcore.geoError"), cancellationToken: ct);
+
+    public Task SetXCoreRfListsCheckedAsync(string id, string protocolId, DateTime at, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.rfListsCheckedAt", at), cancellationToken: ct);
+
+    public Task SetXCoreGeoErrorAsync(string id, string protocolId, string? error, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            error is null
+                ? Builders<VpnServer>.Update.Unset("protocols.$.xcore.geoError")
+                : Builders<VpnServer>.Update.Set("protocols.$.xcore.geoError", error), cancellationToken: ct);
+
+    public async Task<bool> UpdateXCoreSettingsAsync(
+        string id, string protocolId, XCoreSettingsUpdate update, CancellationToken ct = default)
+    {
+        var u = Builders<VpnServer>.Update;
+        var changes = new List<UpdateDefinition<VpnServer>>
+        {
+            u.Set("protocols.$.xcore.title", update.Title),
+            u.Set("protocols.$.xcore.sortOrder", update.SortOrder),
+            u.Set("protocols.$.xcore.subscriptionEnabled", update.SubscriptionEnabled),
+            // Сохранение настроек — явная просьба оператора повторить: пауза после неудачного выпуска
+            // сертификата снимается, даже если домен подписки в форме не менялся (оператор мог поправить DNS).
+            u.Unset("protocols.$.xcore.caddyFailedRevision"),
+            u.Unset("protocols.$.xcore.caddyFailedAt"),
+        };
+
+        // Шифрование VLESS есть у обеих ролей. Выключение стирает ключи: секрет, который не используется, в базе не нужен.
+        if (update.VlessEncryption is { } vless)
+        {
+            changes.Add(u.Set("protocols.$.xcore.vlessEncryption", vless.Enabled));
+            changes.Add(vless.Enabled && vless.Decryption is not null && vless.Client is not null
+                ? u.Set("protocols.$.xcore.vlessDecryption", vless.Decryption)
+                : u.Unset("protocols.$.xcore.vlessDecryption"));
+            changes.Add(vless.Enabled && vless.Decryption is not null && vless.Client is not null
+                ? u.Set("protocols.$.xcore.vlessEncryptionClient", vless.Client)
+                : u.Unset("protocols.$.xcore.vlessEncryptionClient"));
+        }
+
+        // Поля маршрутизации пишутся только входу: фильтр ниже требует роль, а набор полей приходит
+        // лишь для входа, поэтому выход не получит ни ruDirect, ни списков.
+        var role = update.Entry is null ? XCoreRoles.Exit : XCoreRoles.Entry;
+        if (update.Entry is { } entry)
+        {
+            if (entry.RuDirect is { } ruDirect) changes.Add(u.Set("protocols.$.xcore.ruDirect", ruDirect));
+            if (entry.DirectDomains is { } direct) changes.Add(u.Set("protocols.$.xcore.directDomains", direct));
+            if (entry.ProxyDomains is { } proxy) changes.Add(u.Set("protocols.$.xcore.proxyDomains", proxy));
+            changes.Add(entry.SubscriptionHost is { } host
+                ? u.Set("protocols.$.xcore.subscriptionHost", host)
+                : u.Unset("protocols.$.xcore.subscriptionHost"));
+        }
+
+        var protocol = Builders<ProtocolInstance>.Filter.Eq(p => p.Id, protocolId)
+            & Builders<ProtocolInstance>.Filter.Eq(p => p.Kind, ProtocolKinds.XCore)
+            & Builders<ProtocolInstance>.Filter.Eq("xcore.role", role);
+        var result = await _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, protocol),
+            u.Combine(changes), cancellationToken: ct);
+        return result.MatchedCount > 0;
+    }
+
+    public Task SetXCoreExitHealthAsync(
+        string id, string protocolId, IReadOnlyList<XCoreExitHealth> health, CancellationToken ct = default)
+        => _collection.UpdateOneAsync(
+            Builders<VpnServer>.Filter.Eq(x => x.Id, id) & Builders<VpnServer>.Filter.ElemMatch(x => x.Protocols, p => p.Id == protocolId),
+            Builders<VpnServer>.Update.Set("protocols.$.xcore.exitHealth", health), cancellationToken: ct);
 
     public async Task<bool> DeleteAsync(string id, CancellationToken ct = default)
     {

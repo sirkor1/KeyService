@@ -1,0 +1,85 @@
+.dialogForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-inline-size: min(100%, 28rem);
+}
+
+.hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+}
+
+.narrow {
+  composes: input from global;
+  max-width: 160px;
+}
+
+.linkArea {
+  font-family: var(--panel-mono);
+  font-size: var(--panel-meta-size);
+  overflow-wrap: anywhere;
+}
+
+/* Список найденных пользователей: рамки рисует фон, как в списке серверов выдачи ключа. */
+.userList {
+  display: grid;
+  gap: var(--panel-hairline);
+  background: var(--color-divider);
+  border: var(--panel-hairline) solid var(--color-divider);
+  margin-top: var(--space-2);
+}
+
+.userRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  cursor: pointer;
+}
+
+.userRow:hover {
+  background: var(--panel-hover-bg);
+}
+
+.userRowActive {
+  background: var(--panel-selected-bg);
+}
+
+/* Радиокнопку прячем: роль выделения играет подложка строки. */
+.userRow input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.userRow:focus-within {
+  outline: var(--panel-rule) solid var(--color-accent);
+  outline-offset: calc(-1 * var(--panel-rule));
+}
+
+.userInfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.userName {
+  font-size: var(--panel-body-size);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.userMeta {
+  font-size: var(--panel-small-size);
+  color: var(--color-neutral-600);
+  overflow-wrap: anywhere;
+}
+
+.warning {
+  composes: hint;
+  color: var(--color-accent-700);
+}

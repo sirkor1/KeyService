@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { RequireAuth } from '@/auth/RequireAuth';
 import { AppShell } from '@/layout/AppShell';
 import { KeysPage } from '@/pages/KeysPage';
+import { SubscriptionsPage } from '@/pages/SubscriptionsPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { AddServerPage } from '@/pages/add-server/AddServerPage';
@@ -36,6 +37,8 @@ export const router = createBrowserRouter([
 
       { path: 'keys', element: <KeysPage /> },
       { path: 'keys/issue', element: <IssueKeyPage /> },
+
+      { path: 'subscriptions', element: <SubscriptionsPage /> },
 
       { path: 'users', element: <UsersPage /> },
       { path: 'passcodes', element: <PassCodesPage /> },

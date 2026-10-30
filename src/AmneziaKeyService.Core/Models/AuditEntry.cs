@@ -36,7 +36,7 @@ public class AuditEntry
     [BsonElement("actorName")]
     public string? ActorName { get; set; }
 
-    /// <summary>Тип цели: "server", "key", "user", "passcode", "system".</summary>
+    /// <summary>Тип цели: "server", "key", "user", "passcode", "subscription", "system".</summary>
     [BsonElement("targetType")]
     public string? TargetType { get; set; }
 
@@ -73,6 +73,7 @@ public static class AuditTargets
     public const string User     = "user";
     public const string PassCode = "passcode";
     public const string Notification = "notification";
+    public const string Subscription = "subscription";
     public const string System   = "system";
 }
 

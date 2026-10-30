@@ -4,10 +4,12 @@ using AmneziaKeyService.Infrastructure.Events;
 using AmneziaKeyService.Infrastructure.Install;
 using AmneziaKeyService.Infrastructure.Migrations;
 using AmneziaKeyService.Infrastructure.Protocols;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
 using AmneziaKeyService.Infrastructure.Repositories;
 using AmneziaKeyService.Infrastructure.Scripts;
 using AmneziaKeyService.Infrastructure.Services;
 using AmneziaKeyService.Infrastructure.Ssh;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
@@ -34,6 +36,8 @@ public static class AmneziaServiceCollectionExtensions
     {
         services.Configure<MongoDbOptions>(config.GetSection("MongoDb"));
         services.Configure<SecurityOptions>(config.GetSection("Security"));
+        services.Configure<XCoreOptions>(config.GetSection("XCore"));
+        services.Configure<SubscriptionOptions>(config.GetSection("Subscription"));
 
         services.AddSingleton<IMongoClient>(_ =>
             new MongoClient(config["MongoDb:ConnectionString"]));
@@ -50,10 +54,16 @@ public static class AmneziaServiceCollectionExtensions
         services.AddSingleton<IInstallJobRepository, InstallJobRepository>();
         services.AddSingleton<IUsageRepository, UsageRepository>();
         services.AddSingleton<INotificationRepository, NotificationRepository>();
+        services.AddSingleton<ISubscriptionRepository, SubscriptionRepository>();
         services.AddSingleton<RouterMonitorRepository>();
 
         services.AddSingleton<ISecretProtector, AesGcmSecretProtector>();
         services.AddScoped<IAuditService, AuditService>();
+
+        // Подписки не требуют SSH: узлам об изменениях сообщает событие xcore.sync, поэтому сервис
+        // и публикатор доступны всем трём процессам.
+        services.AddSingleton<XCoreSyncPublisher>();
+        services.AddScoped<SubscriptionService>();
 
         // Публикация событий доступна всем: просить о работе может кто угодно,
         // исполняет её только тот, кто вызвал AddAmneziaEventProcessing.
@@ -104,6 +114,8 @@ public static class AmneziaServiceCollectionExtensions
         services.AddSingleton<IMongoMigration, M013_Notifications>();
         services.AddSingleton<IMongoMigration, M014_RouterMonitoring>();
         services.AddSingleton<IMongoMigration, M015_WireGuardKeyPaths>();
+        services.AddSingleton<IMongoMigration, M016_Subscriptions>();
+        services.AddSingleton<IMongoMigration, M017_XCoreRouteIdUnique>();
 
         return services;
     }
@@ -147,6 +159,8 @@ public static class AmneziaServiceCollectionExtensions
         services.AddScoped<IProtocolInstaller>(sp =>
             new WireGuardInstaller(WireGuardInstallProfile.WireGuard, sp.GetRequiredService<ScriptRegistry>()));
         services.AddScoped<IProtocolInstaller, XrayInstaller>();
+        services.AddSingleton<IDnsResolver, SystemDnsResolver>();
+        services.AddScoped<IProtocolInstaller, XCoreInstaller>();
         services.AddScoped<IProtocolInstallerRegistry, ProtocolInstallerRegistry>();
 
         return services;
@@ -166,6 +180,13 @@ public static class AmneziaServiceCollectionExtensions
         services.AddScoped<IServerParamsService, ServerParamsService>();
         services.AddScoped<ServerImportService>();
         services.AddScoped<ServerMaintenanceService>();
+        services.AddScoped<XCoreSyncService>();
+        services.AddScoped<XCoreGeoService>();
+
+        // Последний релиз российских списков узнаёт worker, а не узел: в РФ узел мог бы не дотянуться до API.
+        // Один HttpClient на процесс; таймаут короткий — запрос раз в сутки не должен подвешивать тик.
+        services.AddSingleton<IXCoreReleaseSource>(_ =>
+            new GitHubReleaseSource(new HttpClient { Timeout = TimeSpan.FromSeconds(20) }));
 
         return services;
     }

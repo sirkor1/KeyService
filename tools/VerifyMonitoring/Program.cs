@@ -179,6 +179,9 @@ string[] required =
     "shared/remove_container.sh",
     "shared/build_container.sh",
     "shared/setup_host_firewall.sh",
+    // xcore: свои файлы, не из upstream; читаются установщиком до первой команды на узле.
+    "xcore/Caddyfile",
+    "xcore/index.html",
 ];
 
 // Каждый протокол приносит один и тот же набор из четырёх файлов.

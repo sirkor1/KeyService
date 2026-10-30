@@ -16,6 +16,7 @@ public class UsageRepository : IUsageRepository
     private readonly IMongoCollection<KeyUsageDaily> _keyUsage;
     private readonly IMongoCollection<ServerUsageDaily> _serverUsage;
     private readonly IMongoCollection<ServerHealthDaily> _serverHealth;
+    private readonly IMongoCollection<SubscriptionUsageDaily> _subscriptionUsage;
 
     public UsageRepository(IMongoClient mongo, IOptions<MongoDbOptions> opts)
     {
@@ -23,7 +24,8 @@ public class UsageRepository : IUsageRepository
         _keyUsage     = db.GetCollection<KeyUsageDaily>(opts.Value.KeyUsageDailyCollection);
         _serverUsage  = db.GetCollection<ServerUsageDaily>(opts.Value.ServerUsageDailyCollection);
         _serverHealth = db.GetCollection<ServerHealthDaily>(opts.Value.ServerHealthDailyCollection);
-        // Индексы создаёт миграция 009.
+        _subscriptionUsage = db.GetCollection<SubscriptionUsageDaily>(opts.Value.SubscriptionUsageDailyCollection);
+        // Индексы создают миграции 009 и 016.
     }
 
     public Task IncrementKeysAsync(
@@ -58,6 +60,22 @@ public class UsageRepository : IUsageRepository
         // Порядок не важен, а неупорядоченная запись не останавливается
         // на первой ошибке — один сбойный ключ не должен терять остальные.
         return _keyUsage.BulkWriteAsync(writes, new BulkWriteOptions { IsOrdered = false }, ct);
+    }
+
+    public Task IncrementSubscriptionAsync(
+        string subscriptionId, DateOnly day, long rxBytes, long txBytes, CancellationToken ct = default)
+    {
+        if (rxBytes == 0 && txBytes == 0) return Task.CompletedTask;
+
+        return _subscriptionUsage.UpdateOneAsync(
+            Builders<SubscriptionUsageDaily>.Filter.Eq(x => x.Id, UsageDailyKey.For(subscriptionId, day)),
+            Builders<SubscriptionUsageDaily>.Update
+                .Inc(x => x.RxBytes, rxBytes)
+                .Inc(x => x.TxBytes, txBytes)
+                .SetOnInsert(x => x.SubscriptionId, subscriptionId)
+                .SetOnInsert(x => x.Date, UsageDailyKey.Format(day))
+                .SetOnInsert(x => x.ExpireAt, ExpireAt(day)),
+            new UpdateOptions { IsUpsert = true }, ct);
     }
 
     public Task IncrementServerAsync(

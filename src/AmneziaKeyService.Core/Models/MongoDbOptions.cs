@@ -24,6 +24,11 @@ public class MongoDbOptions
     public string ServerUsageDailyCollection { get; set; } = "server_usage_daily";
     public string ServerHealthDailyCollection { get; set; } = "server_health_daily";
 
+    // ── Подписки ──────────────────────────────────────────────────────────────
+
+    public string SubscriptionsCollection { get; set; } = "subscriptions";
+    public string SubscriptionUsageDailyCollection { get; set; } = "subscription_usage_daily";
+
     // ── Шина доменных событий ─────────────────────────────────────────────────
 
     public string DomainEventsCollection { get; set; } = "domain_events";

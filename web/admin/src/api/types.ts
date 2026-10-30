@@ -60,7 +60,7 @@ export interface LoginResponse {
 // ── Серверы ────────────────────────────────────────────────────────────────
 
 export type ServerStatus = 'ok' | 'setup' | 'offline' | 'error' | 'empty';
-export type ProtocolKind = 'awg3' | 'awg2' | 'awg' | 'wireguard' | 'xray';
+export type ProtocolKind = 'awg3' | 'awg2' | 'awg' | 'wireguard' | 'xray' | 'xcore';
 export type ProtocolState = 'installed' | 'installing' | 'failed' | 'absent';
 export type SshAuthType = 'password' | 'privateKey' | 'agent';
 
@@ -120,6 +120,58 @@ export interface XrayInfo {
   shortId: string | null;
 }
 
+/** Роль узла xcore: выход принимает клиентов за рубежом, вход — в РФ и передаёт трафик на выходы. */
+export type XCoreRole = 'exit' | 'entry';
+
+/**
+ * Состояние узла xcore для карточки. Ключей и секретов в DTO нет, и добавлять их сюда нельзя:
+ * панель показывает только то, что нужно оператору, чтобы понять, дошли ли изменения до узла.
+ */
+export interface XCoreInfo {
+  role: XCoreRole;
+  domain: string;
+  title: string | null;
+  /** Попадает ли узел в подписки. */
+  subscriptionEnabled: boolean;
+  /** Когда на узел последний раз применили желаемое состояние. */
+  appliedAt: string | null;
+  /** Ошибка последней синхронизации; null — всё применено. */
+  syncError: string | null;
+  /** Номер маршрута выхода в UUID ссылки через вход; у входа и у выхода без номера null. */
+  routeId: number | null;
+  sortOrder: number;
+  /** Только вход: российские сайты идут со входа напрямую. */
+  ruDirect: boolean;
+  /** Только вход: домены «всегда напрямую» (в виде, нормализованном сервером: domain:…, full:…, keyword:…). */
+  directDomains: string[];
+  /** Только вход: домены «всегда через VPN». */
+  proxyDomains: string[];
+  /** Только вход: домен, по которому вход отдаёт /sub/; null — не задан. */
+  subscriptionHost: string | null;
+  /** Только вход: состояние плеч к выходам по последней проверке. */
+  exitHealth: XCoreExitHealth[];
+  /** Только вход: тег релиза российских списков, файлы которого лежат на узле; null — только встроенные списки образа. */
+  rfListsTag: string | null;
+  /** Только вход: когда файлы этого релиза были положены на узел. */
+  rfListsAppliedAt: string | null;
+  /** Только вход: когда списки в последний раз сверяли с GitHub. */
+  rfListsCheckedAt: string | null;
+  /** Только вход: причина последнего неудачного обновления списков; null — ошибки нет. */
+  geoError: string | null;
+  /** Включено ли шифрование VLESS (mlkem768x25519plus) на этом узле. Сами ключи наружу не отдаются. */
+  vlessEncryption: boolean;
+}
+
+/** Результат последней проверки плеча вход → выход. */
+export interface XCoreExitHealth {
+  /** Узел-выход. */
+  serverId: string;
+  ok: boolean;
+  checkedAt: string;
+  /** Короткая причина сбоя; null, если плечо открыто. */
+  error: string | null;
+}
+
 export interface ProtocolDetail {
   id: string;
   kind: ProtocolKind;
@@ -134,6 +186,7 @@ export interface ProtocolDetail {
   isCached: boolean;
   wg: WgInfo | null;
   xray: XrayInfo | null;
+  xcore: XCoreInfo | null;
   installedAt: string | null;
   lastSyncedAt: string | null;
 }
@@ -249,6 +302,41 @@ export interface KeyDetail {
   rxBytes: number;
   txBytes: number;
   lastSeenAt: string | null;
+}
+
+// ── Подписки ───────────────────────────────────────────────────────────────
+
+export type SubscriptionStatus = 'active' | 'revoked';
+export type SubscriptionRevokeReason = 'manual' | 'expired' | 'quota';
+export type SubscriptionSource = 'telegram' | 'panel';
+
+/** Ни токена, ни UUID в ответах списка и карточки нет: ссылку отдаёт отдельный запрос. */
+export interface SubscriptionListItem {
+  id: string;
+  userId: string;
+  userName: string | null;
+  status: SubscriptionStatus;
+  revokeReason: SubscriptionRevokeReason | null;
+  createdAt: string;
+  expiresAt: string | null;
+  trafficBytes: number;
+  trafficLimitBytes: number | null;
+  lastSeenAt: string | null;
+  source: SubscriptionSource;
+}
+
+export interface SubscriptionDetail {
+  summary: SubscriptionListItem;
+  rxBytes: number;
+  txBytes: number;
+  revokedAt: string | null;
+  tokenRotatedAt: string | null;
+  createdByUserId: string | null;
+}
+
+/** Публичная ссылка подписки. Это секрет: любой, кто её знает, пользуется подпиской. */
+export interface SubscriptionLink {
+  url: string;
 }
 
 // ── Установка ──────────────────────────────────────────────────────────────

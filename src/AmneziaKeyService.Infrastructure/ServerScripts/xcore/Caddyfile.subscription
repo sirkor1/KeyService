@@ -1,0 +1,21 @@
+http://$SUB_HOST {
+	bind 0.0.0.0 [::]
+	redir https://{host}{uri} permanent
+}
+
+https://$SUB_HOST:8443 {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+	handle /sub/* {
+		reverse_proxy $UPSTREAM {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle {
+		respond 404
+	}
+}

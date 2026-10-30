@@ -13,12 +13,15 @@ import { shouldAttemptRefresh } from './refreshPolicy';
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string | undefined;
+  /** Поле запроса, к которому относится отказ (camelCase): форма показывает текст у этого поля. */
+  readonly field: string | undefined;
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(status: number, message: string, code?: string, field?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.field = field;
   }
 
   /** Не аутентифицирован — панель должна отправить на экран входа. */
@@ -37,6 +40,7 @@ interface ProblemDetails {
   detail?: string;
   status?: number;
   code?: string;
+  field?: string;
   error?: string;
 }
 
@@ -87,7 +91,7 @@ async function toApiError(response: Response): Promise<ApiError> {
   const message =
     problem.title ?? problem.detail ?? problem.error ?? defaultMessage(response.status);
 
-  return new ApiError(response.status, message, problem.code);
+  return new ApiError(response.status, message, problem.code, problem.field);
 }
 
 function defaultMessage(status: number): string {

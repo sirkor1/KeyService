@@ -1,4 +1,4 @@
-import type { ProtocolKind } from '@/api/types';
+import type { ProtocolKind, XCoreRole } from '@/api/types';
 import type { ProtocolSpecBody } from '@/api/endpoints';
 
 /**
@@ -12,6 +12,10 @@ export interface ProtocolDraft {
   mtu: string;
   subnetAddress: string;
   siteName: string;
+  /** Только для xcore: домен, A-запись которого указывает на узел. */
+  domain: string;
+  /** Только для xcore: роль узла; не задана — выход. */
+  role?: XCoreRole;
 }
 
 export interface Draft {
@@ -61,7 +65,7 @@ export const initialDraft: Draft = {
   sshKeyPassphrase: '',
 
   protocols: [
-    { kind: 'awg3', enabled: true, port: '', mtu: '1376', subnetAddress: '10.8.3.0', siteName: '' },
+    { kind: 'awg3', enabled: true, port: '', mtu: '1376', subnetAddress: '10.8.3.0', siteName: '', domain: '' },
     {
       kind: 'awg2',
       enabled: false,
@@ -71,6 +75,7 @@ export const initialDraft: Draft = {
       mtu: '1376',
       subnetAddress: '10.8.1.0',
       siteName: '',
+      domain: '',
     },
     {
       kind: 'wireguard',
@@ -79,6 +84,7 @@ export const initialDraft: Draft = {
       mtu: '1420',
       subnetAddress: '10.8.2.0',
       siteName: '',
+      domain: '',
     },
     {
       kind: 'xray',
@@ -87,7 +93,10 @@ export const initialDraft: Draft = {
       mtu: '',
       subnetAddress: '',
       siteName: 'www.googletagmanager.com',
+      domain: '',
     },
+    // Выключен по умолчанию: ему нужны 443 и 80, а на них по умолчанию стоит Xray Reality.
+    { kind: 'xcore', enabled: false, port: '', mtu: '', subnetAddress: '', siteName: '', domain: '', role: 'exit' },
   ],
 };
 
@@ -133,6 +142,13 @@ export function toProtocolSpecs(draft: Draft): ProtocolSpecBody[] {
     .map((p) => {
       const spec: ProtocolSpecBody = { kind: p.kind };
 
+      // xcore всегда на 443 и без подсети: спрашиваем только домен и роль.
+      if (p.kind === 'xcore') {
+        spec.domain = p.domain.trim();
+        spec.role = p.role ?? 'exit';
+        return spec;
+      }
+
       // Пустые поля не отправляем: сервер подставит значения по умолчанию,
       // а пустая строка перезаписала бы их.
       if (p.port.trim()) spec.port = p.port.trim();
@@ -152,8 +168,14 @@ export function toProtocolSpecs(draft: Draft): ProtocolSpecBody[] {
 /** Порты, занятость которых проверяем перед установкой. */
 export function portsToCheck(draft: Draft): string[] {
   return draft.protocols
-    .filter((p) => p.enabled && p.port.trim())
-    .map((p) => p.port.trim());
+    .filter((p) => p.enabled)
+    // 80 нужен xcore для выпуска сертификата, поэтому проверяется вместе с 443.
+    .flatMap((p) => (p.kind === 'xcore' ? ['443', '80'] : p.port.trim() ? [p.port.trim()] : []));
+}
+
+/** Займёт ли включённый протокол порт: у Reality пустое поле означает 443. */
+function takesPort(p: ProtocolDraft, port: string): boolean {
+  return (p.kind === 'xray' ? p.port.trim() || '443' : p.port.trim()) === port;
 }
 
 /** Что мешает перейти с текущего шага дальше. */
@@ -176,8 +198,15 @@ export function stepBlocker(draft: Draft): string | null {
     const enabled = draft.protocols.filter((p) => p.enabled);
     if (enabled.length === 0) return 'Выберите хотя бы один протокол.';
 
+    const xcore = enabled.find((p) => p.kind === 'xcore');
+    if (xcore) {
+      if (!xcore.domain.trim()) return 'Укажите домен для Xray подписок.';
+      if (enabled.some((p) => p !== xcore && (takesPort(p, '443') || takesPort(p, '80'))))
+        return 'Xray подписок занимает порты 443 и 80: отключите VLESS Reality на 443 или задайте ему другой порт.';
+    }
+
     const subnets = enabled
-      .filter((p) => p.kind !== 'xray')
+      .filter((p) => p.kind !== 'xray' && p.kind !== 'xcore')
       .map((p) => p.subnetAddress.trim());
 
     if (new Set(subnets).size !== subnets.length)

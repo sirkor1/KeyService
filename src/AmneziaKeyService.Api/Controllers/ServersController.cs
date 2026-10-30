@@ -3,9 +3,12 @@ using AmneziaKeyService.Core.DTOs.Panel;
 using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
 using AmneziaKeyService.Infrastructure.Services;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace AmneziaKeyService.Api.Controllers;
 
@@ -29,6 +32,10 @@ public class ServersController : ControllerBase
     private readonly IInstallService _install;
     private readonly ISecretProtector _secrets;
     private readonly IAuditService _audit;
+    private readonly XCoreSyncPublisher _xcoreSync;
+    private readonly IDnsResolver _dns;
+    private readonly ISshSessionFactory _ssh;
+    private readonly XCoreOptions _xcoreOptions;
 
     public ServersController(
         IVpnServerRepository servers,
@@ -38,7 +45,11 @@ public class ServersController : ControllerBase
         IServerParamsService serverParams,
         IInstallService install,
         ISecretProtector secrets,
-        IAuditService audit)
+        IAuditService audit,
+        XCoreSyncPublisher xcoreSync,
+        IDnsResolver dns,
+        ISshSessionFactory ssh,
+        IOptions<XCoreOptions> xcoreOptions)
     {
         _servers      = servers;
         _clients      = clients;
@@ -48,6 +59,10 @@ public class ServersController : ControllerBase
         _install      = install;
         _secrets      = secrets;
         _audit        = audit;
+        _xcoreSync    = xcoreSync;
+        _dns          = dns;
+        _ssh          = ssh;
+        _xcoreOptions = xcoreOptions.Value;
     }
 
     /// <summary>Список узлов с фильтрами поиска, протокола и статуса.</summary>
@@ -240,9 +255,110 @@ public class ServersController : ControllerBase
             throw new BadRequestException("Сначала завершите установку протокола.");
         if (!await _servers.SetProtocolEnabledAsync(id, protocolId, request.Enabled, ct))
             throw new NotFoundException("Протокол не найден.");
+
+        // Для xcore это не «выдача ключей», а участие узла в топологии: включённый вход
+        // добавляет служебного пользователя на выходах, включённый выход — плечо во входах.
+        // Публикация после записи; недоступная очередь запроса не проваливает — узлы догонит сверка.
+        if (protocol.Kind == ProtocolKinds.XCore)
+            await _xcoreSync.PublishForAllAsync(CurrentUserId, ct);
+
         await _audit.WriteAsync("protocol.availability", $"{protocol.DisplayNameOrKind()}: выдача новых ключей " +
             (request.Enabled ? "включена" : "выключена"), User, AuditTargets.Server, id, server.Name, ct: ct);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Настройки xcore: название, порядок, участие в подписках, а у входа — маршрутизация и домен подписки.
+    /// Роль, домен узла и ключи этим методом не меняются. После записи узлы синхронизируются: вход и выход
+    /// зависят друг от друга, а Caddy входа — от домена подписки.
+    /// </summary>
+    [HttpPut("{id}/protocols/{protocolId}/xcore")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateXCoreSettings(
+        string id, string protocolId, [FromBody] XCoreSettingsRequest request, CancellationToken ct)
+    {
+        var server = await _servers.GetByIdAsync(id, ct) ?? throw new NotFoundException("Сервер не найден.");
+        var protocol = server.FindProtocol(protocolId) ?? throw new NotFoundException("Протокол не найден.");
+        if (protocol.Kind != ProtocolKinds.XCore || protocol.XCore is null)
+            throw new BadRequestException("Протокол не является xcore.");
+
+        var update = XCoreSettingsRules.Validate(protocol, request, _xcoreOptions.SubscriptionUpstream);
+
+        // A-запись проверяется только у нового домена подписки: сохранение остальных полей не должно упираться
+        // в DNS, который мог измениться уже после включения домена.
+        if (XCoreSettingsRules.NewSubscriptionHost(protocol.XCore, update) is { } newHost)
+        {
+            try
+            {
+                await XCoreDomainCheck.EnsurePointsToNodeAsync(_dns, server.Host, newHost, "повторите сохранение", ct);
+            }
+            catch (BadRequestException ex)
+            {
+                throw new BadRequestException(ex.Message, "subscriptionHost");
+            }
+        }
+
+        // Ключи шифрования VLESS создаются на узле и только при включении. Это последний шаг перед записью:
+        // отказ любой проверки выше не должен успеть потратить SSH-сессию.
+        switch (XCoreSettingsRules.VlessEncryptionAction(protocol.XCore, request.VlessEncryption))
+        {
+            case true:
+                if (protocol.State != ProtocolStates.Installed)
+                    throw new BadRequestException("Сначала завершите установку протокола.", "vlessEncryption");
+                await using (var ssh = await _ssh.ConnectAsync(server, ct))
+                    update = update with { VlessEncryption = await XCoreVlessEncryption.GenerateAsync(
+                        ssh, protocol.XCore.ImageRef, _secrets, ct) };
+                break;
+            case false:
+                update = update with { VlessEncryption = new XCoreVlessEncryptionChange(false, null, null) };
+                break;
+        }
+
+        var changed = XCoreSettingsRules.ChangedFields(protocol.XCore, update);
+        if (!await _servers.UpdateXCoreSettingsAsync(id, protocolId, update, ct))
+            throw new NotFoundException("Протокол не найден.");
+
+        // Журнал только о реальной правке: повтор той же формы не должен засорять его. Синхронизация —
+        // всегда: сохранение формы остаётся способом заставить узел перечитать состояние после сбоя.
+        if (changed.Count > 0)
+            await _audit.WriteAsync(AuditEvents.XCoreSettingsChanged,
+                $"Изменены настройки xcore на узле «{server.Name}»: {string.Join(", ", changed)}",
+                User, AuditTargets.Server, id, server.Name,
+                meta: new Dictionary<string, string> { ["role"] = protocol.XCore.Role, ["fields"] = string.Join(",", changed) },
+                ct: ct);
+
+        await _xcoreSync.PublishForAllAsync(CurrentUserId, ct);
+        return NoContent();
+    }
+
+    /// <summary>
+    /// «Обновить списки сейчас»: просит worker положить на вход последний релиз российских списков, не дожидаясь
+    /// суточной проверки и минимального возраста. Скачивание идёт событием на партиции узла; результат
+    /// оператор видит в карточке входа (<c>rfListsTag</c> и <c>geoError</c>). Тег определяет worker: у api нет
+    /// ни расписания, ни права решать, какой релиз применять.
+    /// </summary>
+    [HttpPost("{id}/protocols/{protocolId}/xcore/rf-lists/update")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateXCoreRfLists(string id, string protocolId, CancellationToken ct)
+    {
+        var server = await _servers.GetByIdAsync(id, ct) ?? throw new NotFoundException("Сервер не найден.");
+        var protocol = server.FindProtocol(protocolId) ?? throw new NotFoundException("Протокол не найден.");
+        if (protocol.Kind != ProtocolKinds.XCore || protocol.XCore is not { Role: XCoreRoles.Entry })
+            throw new BadRequestException("Российские списки есть только у входа xcore.");
+        if (protocol.State != ProtocolStates.Installed)
+            throw new BadRequestException("Сначала завершите установку протокола.");
+        if (!_xcoreOptions.RfListsEnabled)
+            throw new BadRequestException("Российские списки выключены настройкой XCore:RfListsEnabled.");
+
+        await _xcoreSync.PublishGeoUpdateAsync(id, protocolId, null, CurrentUserId, ct);
+        await _audit.WriteAsync(AuditEvents.XCoreRfListsRequested,
+            $"Запрошено обновление российских списков на узле «{server.Name}»",
+            User, AuditTargets.Server, id, server.Name, ct: ct);
+        return Accepted();
     }
 
     /// <summary>Удаляет протокол с узла вместе с контейнером.</summary>

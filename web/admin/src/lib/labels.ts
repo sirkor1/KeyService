@@ -1,4 +1,14 @@
-import type { AuditLevel, KeyStatus, ProtocolState, ServerStatus, UserRole, UserStatus } from '@/api/types';
+import type {
+  AuditLevel,
+  KeyStatus,
+  ProtocolState,
+  ServerStatus,
+  SubscriptionRevokeReason,
+  SubscriptionSource,
+  SubscriptionStatus,
+  UserRole,
+  UserStatus,
+} from '@/api/types';
 
 /**
  * Подписи и оформление статусов.
@@ -58,4 +68,27 @@ export const sshAuthType: Record<string, string> = {
   password: 'пароль',
   privateKey: 'SSH-ключ',
   agent: 'SSH-агент',
+};
+
+const subscriptionRevokeReason: Record<SubscriptionRevokeReason, { label: string; tone: TagTone }> = {
+  expired: { label: 'отозвана · истёк срок', tone: 'outline' },
+  quota: { label: 'отозвана · квота', tone: 'accent' },
+  manual: { label: 'отозвана · вручную', tone: 'accent' },
+};
+
+/**
+ * Статус подписки с причиной отзыва: «квота» и «вручную» заметнее «срока» — первое требует
+ * решения оператора, второе штатно.
+ */
+export function subscriptionStatus(
+  status: SubscriptionStatus,
+  reason: SubscriptionRevokeReason | null,
+): { label: string; tone: TagTone } {
+  if (status === 'active') return { label: 'активна', tone: 'neutral' };
+  return (reason && subscriptionRevokeReason[reason]) || { label: 'отозвана', tone: 'accent' };
+}
+
+export const subscriptionSource: Record<SubscriptionSource, string> = {
+  telegram: 'Telegram',
+  panel: 'панель',
 };

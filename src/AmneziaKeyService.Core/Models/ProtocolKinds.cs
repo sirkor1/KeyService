@@ -20,12 +20,36 @@ public static class ProtocolKinds
     /// <summary>VLESS Reality на Xray-core, контейнер amnezia-xray.</summary>
     public const string Xray = "xray";
 
+    /// <summary>
+    /// Свой Xray-core для подписок Happ, контейнер amnezia-xcore. Не протокол Amnezia:
+    /// клиент AmneziaVPN его не знает, поэтому в выдаче vpn:// он не участвует.
+    /// </summary>
+    public const string XCore = "xcore";
+
+    /// <summary>
+    /// Виды семейства Amnezia — те, что знает клиент AmneziaVPN. XCore сюда не входит
+    /// намеренно: «все виды Amnezia» и «все виды, которые панель умеет ставить» —
+    /// разные вопросы, и ответ на второй — <see cref="Installable"/>.
+    /// </summary>
     public static readonly string[] All = [Awg3, Awg2, AwgLegacy, WireGuard, Xray];
+
+    /// <summary>
+    /// Виды, для которых в панели есть установщик и которые очистка узла считает своими.
+    /// Отдельный набор, а не правка <see cref="All"/>: проверка «всё из All выдаваемо
+    /// по vpn://» остаётся верной, а xcore не может случайно попасть туда, где ждут
+    /// только протоколы Amnezia.
+    /// </summary>
+    public static readonly string[] Installable = [.. All, XCore];
 
     /// <summary>Семейство WireGuard: общий формат конфига, peer-ы и чтение статистики.</summary>
     public static readonly string[] WireGuardFamily = [Awg3, Awg2, AwgLegacy, WireGuard];
 
+    /// <summary>Виды, по которым выдаётся ключ vpn:// для AmneziaVPN.</summary>
+    public static readonly string[] AmneziaIssuable = [.. WireGuardFamily, Xray];
+
     public static bool IsWireGuardFamily(string kind) => WireGuardFamily.Contains(kind);
+
+    public static bool IsAmneziaIssuable(string kind) => AmneziaIssuable.Contains(kind);
 
     /// <summary>Название для интерфейса — как в макете панели.</summary>
     public static string DisplayName(string kind) => kind switch
@@ -35,6 +59,7 @@ public static class ProtocolKinds
         AwgLegacy => "AmneziaWG 1.0",
         WireGuard => "WireGuard",
         Xray      => "VLESS Reality",
+        XCore     => "Xray (подписки)",
         _         => kind
     };
 
@@ -46,6 +71,7 @@ public static class ProtocolKinds
         AwgLegacy => "amnezia-awg",
         WireGuard => "amnezia-wireguard",
         Xray      => "amnezia-xray",
+        XCore     => "amnezia-xcore",
         _         => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Неизвестный протокол.")
     };
 }

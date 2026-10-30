@@ -56,4 +56,9 @@ public class NotFoundException : Exception
 public class BadRequestException : Exception
 {
     public BadRequestException(string message) : base(message) { }
+
+    /// <param name="field">Поле запроса (camelCase), к которому относится отказ: панель показывает текст у этого поля.</param>
+    public BadRequestException(string message, string field) : base(message) => Field = field;
+
+    public string? Field { get; }
 }

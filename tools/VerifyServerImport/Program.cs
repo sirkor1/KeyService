@@ -135,6 +135,17 @@ fixture.ExtraContainer = "amnezia-xray";
 discovery = await fixture.Service.DiscoverAsync(fixture.Request(), default);
 Check(discovery.Warnings.Count == 1, "unsupported containers clearly reported and left untouched");
 
+// xcore ставится только панелью и в формате Amnezia не существует: импорт его не обнаруживает
+// и не предлагает, а контейнер остаётся нетронутым.
+foreach (var container in new[] { "amnezia-xcore", "amnezia-xcore-web" })
+{
+    fixture = new Fixture();
+    fixture.ExtraContainer = container;
+    discovery = await fixture.Service.DiscoverAsync(fixture.Request(), default);
+    Check(discovery.Protocols.Count == 3 && discovery.Protocols.All(p => p.Kind != "xcore"),
+        $"import does not discover {container} as a protocol");
+}
+
 var mongoArg = args.FirstOrDefault(a => a.StartsWith("--mongo="));
 if (mongoArg is not null)
 {

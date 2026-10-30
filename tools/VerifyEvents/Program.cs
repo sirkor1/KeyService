@@ -237,6 +237,30 @@ try
     await leases.TryAcquireAsync(partition, Beta, TimeSpan.FromSeconds(-1));
     Check("Истёкшую аренду перехватывает другой процесс",
         await leases.TryAcquireAsync(partition, Alpha, TimeSpan.FromMinutes(1)));
+    // ── Публикация без дублей ────────────────────────────────────────────────
+
+    Console.WriteLine();
+    Console.WriteLine("Публикация без дублей");
+
+    const string ProbeSync = "probe.sync";
+    long Pending(string partition) => client.GetDatabase(database).GetCollection<DomainEvent>(opts.Value.DomainEventsCollection)
+        .CountDocuments(e => e.Type == ProbeSync && e.PartitionKey == partition && e.Status == DomainEventStatuses.Pending);
+
+    var firstSync = await events.PublishIfNoPendingAsync(ProbeSync, new { serverId = "n1" }, "n1", correlationId: "n1");
+    Check("Первое событие создаётся: pending, партиция сохранена",
+        firstSync is { Status: DomainEventStatuses.Pending, PartitionKey: "n1" } && Pending("n1") == 1);
+    Check("Второй вызов при ожидающем событии ничего не создаёт",
+        await events.PublishIfNoPendingAsync(ProbeSync, new { serverId = "n1" }, "n1") is null && Pending("n1") == 1);
+    Check("Другая партиция публикуется независимо",
+        await events.PublishIfNoPendingAsync(ProbeSync, new { serverId = "n2" }, "n2") is not null);
+
+    var inWork = await events.ClaimAsync([ProbeSync], Alpha, TimeSpan.FromMinutes(1));
+    var afterClaim = await events.PublishIfNoPendingAsync(ProbeSync, new { serverId = inWork!.PartitionKey }, inWork.PartitionKey!);
+    Check("Захваченное (в работе) не считается ожидающим: новое событие создаётся",
+        afterClaim is not null && afterClaim.Id != inWork.Id && Pending(inWork.PartitionKey!) == 1);
+    Check("И теперь уже оно закрывает публикацию",
+        await events.PublishIfNoPendingAsync(ProbeSync, new { serverId = inWork.PartitionKey }, inWork.PartitionKey!) is null);
+
     // ── Диспетчер целиком ────────────────────────────────────────────────────
     // Всё предыдущее проверяло примитивы. Здесь работает настоящий диспетчер,
     // и проверяется то, ради чего он написан: два экземпляра разбирают очередь

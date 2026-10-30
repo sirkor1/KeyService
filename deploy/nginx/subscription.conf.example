@@ -1,0 +1,90 @@
+# /etc/nginx/sites-available/amnezia-subscription
+#
+# Replace sub.example.com before installing this file.  Set
+# SUBSCRIPTION_PUBLIC_BASE_URL=https://sub.example.com in the Compose
+# environment so that the panel and the Telegram bot build links for this name.
+#
+# Why a separate domain instead of another location on panel.example.com:
+#
+#  * The subscription link is a credential that every client app opens on every
+#    refresh.  Putting it on the panel's own name would tie the panel's public
+#    address to a name that ends up inside client apps and shared links.  Here
+#    only the /sub/ prefix is forwarded; everything else answers 404, including
+#    the panel and /api/, so this name does not reveal that a panel exists.
+#  * The link is made of a public base URL plus a token, and clients keep the
+#    whole string.  Moving the name later (for example to an entry node in
+#    Russia, stage C of the plan) means changing DNS and this one file, not
+#    re-issuing every subscription.
+#
+# The token is part of the request path, so the path must never reach a log:
+# access_log is off here, and the application keeps Microsoft.AspNetCore at
+# Warning or above for the same reason.  Do not turn access_log on for this
+# server, not even temporarily.  Certbot maintains the certificate files and
+# does not need to alter this configuration.
+
+upstream amnezia_subscription_api {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sub.example.com;
+
+    # Leave this path unproxied: Certbot HTTP-01 uses it to validate the name.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name sub.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/sub.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sub.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # The feed is a plain GET; there is nothing to upload.
+    client_max_body_size 1k;
+
+    # Never write the request line: it contains the token.
+    access_log off;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+
+    # The only thing exposed.  The token is read from the path by the API, which
+    # applies its own rate limit and answers 404 for an unknown token.
+    location ^~ /sub/ {
+        access_log off;
+
+        proxy_pass http://amnezia_subscription_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port 443;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+    }
+
+    location / {
+        return 404;
+    }
+}

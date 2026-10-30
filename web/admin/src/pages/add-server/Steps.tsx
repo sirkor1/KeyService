@@ -2,7 +2,8 @@ import type { Dispatch } from 'react';
 import type { ConnectionTest, ProtocolKind } from '@/api/types';
 import { Btn, cx } from '@/components/Btn';
 import { Seg } from '@/components/Filters';
-import { ProtocolDisplay } from '@/lib/protocols';
+import { XCoreRoleField } from '@/components/XCoreRoleField';
+import { ProtocolDisplay, XCORE_INSTALL_LABEL } from '@/lib/protocols';
 import type { Draft, DraftAction } from './draft';
 import styles from './AddServerPage.module.css';
 
@@ -187,6 +188,7 @@ const PROTOCOL_NOTE: Record<ProtocolKind, string> = {
   awg: 'предыдущая версия AmneziaWG',
   wireguard: 'быстрый, но легко определяется DPI',
   xray: 'маскировка под TLS-трафик к чужому сайту',
+  xcore: 'подписки для приложения Happ, нужны домен и свободные порты 80 и 443',
 };
 
 export function StepProtocols({ draft, dispatch }: StepProps) {
@@ -198,7 +200,9 @@ export function StepProtocols({ draft, dispatch }: StepProps) {
         {draft.protocols.map((protocol) => (
           <div key={protocol.kind} className={styles.protocolRow}>
             <div className={styles.protocolHead}>
-              <span className={styles.protocolName}>{ProtocolDisplay[protocol.kind]}</span>
+              <span className={styles.protocolName}>
+                {protocol.kind === 'xcore' ? XCORE_INSTALL_LABEL : ProtocolDisplay[protocol.kind]}
+              </span>
               <span className={styles.protocolNote}>{PROTOCOL_NOTE[protocol.kind]}</span>
               <button
                 type="button"
@@ -209,7 +213,36 @@ export function StepProtocols({ draft, dispatch }: StepProps) {
               </button>
             </div>
 
-            {protocol.enabled ? (
+            {protocol.enabled && protocol.kind === 'xcore' ? (
+              <div className={styles.protocolFields}>
+                <XCoreRoleField
+                  name="role-xcore"
+                  value={protocol.role ?? 'exit'}
+                  onChange={(role) =>
+                    dispatch({ type: 'setProtocol', kind: protocol.kind, field: 'role', value: role })
+                  }
+                />
+                <div className="field">
+                  <label htmlFor="domain-xcore">Домен</label>
+                  <input
+                    id="domain-xcore"
+                    className="input"
+                    value={protocol.domain}
+                    placeholder="node1.example.com"
+                    autoComplete="off"
+                    onChange={(e) =>
+                      dispatch({
+                        type: 'setProtocol', kind: protocol.kind,
+                        field: 'domain', value: e.target.value,
+                      })
+                    }
+                  />
+                  <p className={styles.hint}>
+                    A-запись домена должна указывать на IP узла; порты 80 и 443 должны быть свободны.
+                  </p>
+                </div>
+              </div>
+            ) : protocol.enabled ? (
               <div className={styles.protocolFields}>
                 <div className="field">
                   <label htmlFor={`port-${protocol.kind}`}>Порт</label>

@@ -20,6 +20,7 @@ const PROTOCOL_TABS = [
   { value: 'awg2', label: 'AmneziaWG 2.0' },
   { value: 'wireguard', label: 'WireGuard' },
   { value: 'xray', label: 'VLESS Reality' },
+  { value: 'xcore', label: 'Xray (подписки)' },
 ];
 
 const columns: Column<ServerListItem>[] = [

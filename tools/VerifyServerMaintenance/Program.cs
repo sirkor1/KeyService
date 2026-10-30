@@ -8,6 +8,7 @@ using AmneziaKeyService.Infrastructure.Install;
 using AmneziaKeyService.Infrastructure.Repositories;
 using AmneziaKeyService.Infrastructure.Services;
 using AmneziaKeyService.Infrastructure.Keys;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -175,6 +176,81 @@ f = new(); f.KeepContainer = true; job = await f.Queue(); await f.Service.Execut
 Check(job.Status == InstallJobStatuses.Failed && f.Keys.All(k => k.Status != KeyStatuses.Revoked), "verify removal even after successful docker result");
 f = new(); job = await f.Queue(); job.CancelRequested = true; await f.Service.ExecuteAsync(job, default);
 Check(job.Status == InstallJobStatuses.Canceled && f.Commands.Count == 0, "cancel before work has no remote effects");
+// xcore: два контейнера (Xray и Caddy) с bind-каталогами под /opt/amnezia-xcore, которые очистка удаляет сама.
+f = new(); f.AddXCore(); job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server!.Protocols.Count == 0 && f.Containers.Keys.SequenceEqual(["unrelated-app"]),
+    "xcore cleanup removes Xray and Caddy containers and leaves unrelated ones");
+Check(f.Commands.Contains("sudo docker rm -f -v " + new string('d', 64)) && f.Commands.Contains("sudo docker rm -f -v " + new string('e', 64)),
+    "xcore containers are removed by immutable IDs");
+Check(f.XCoreDirRemoved && f.Commands.IndexOf("sudo rm -rf /opt/amnezia-xcore") > f.Commands.FindLastIndex(c => c.StartsWith("sudo docker rm -f -v ")),
+    "xcore directory is removed after its containers");
+Check(f.Keys.All(k => !k.IsActive), "xcore node cleanup revokes legacy keys through the Amnezia protocol");
+
+var xcoreMountCases = new (string Label, string Container, List<(string Type, string Source, string Destination)> Mounts)[] {
+    ("extra foreign bind next to known xcore paths", "amnezia-xcore", [("bind", "/opt/amnezia-xcore/conf", "/etc/xcore"), ("bind", "/srv/other", "/data")]),
+    ("Caddy data from outside /opt/amnezia-xcore", "amnezia-xcore-web", [("bind", "/home/user/caddy-data", "/data")]),
+    ("known Caddy source at an unknown destination", "amnezia-xcore-web", [("bind", "/opt/amnezia-xcore/caddy/data", "/somewhere")]),
+    ("Docker volume on an xcore container", "amnezia-xcore", [("volume", "/var/lib/docker/volumes/x/_data", "/etc/xcore")]),
+    ("system /lib/modules mount is not xcore's", "amnezia-xcore", [("bind", "/lib/modules", "/lib/modules")]),
+    ("xcore path leaking into a WireGuard container", "amnezia-wireguard", [("bind", "/opt/amnezia-xcore/conf", "/etc/xcore")]),
+    ("geo directory from outside /opt/amnezia-xcore", "amnezia-xcore", [("bind", "/opt/amnezia-xcore/conf", "/etc/xcore"), ("bind", "/srv/geo", "/etc/xcore-geo")]),
+    ("known geo source at an unknown destination", "amnezia-xcore", [("bind", "/opt/amnezia-xcore/geo", "/usr/local/share/xray")]),
+    ("geo directory mounted into the Caddy container", "amnezia-xcore-web", [("bind", "/opt/amnezia-xcore/geo", "/etc/xcore-geo")]),
+};
+foreach (var (label, container, mounts) in xcoreMountCases) {
+    f = new(); f.AddXCore(); f.MountOverride[container] = mounts; job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+    Check(job.Status == InstallJobStatuses.Failed && job.Error!.Contains("внешние каталоги") && !f.Commands.Any(c => c.Contains(" rm ")) && !f.XCoreDirRemoved && f.Keys.Any(k => k.IsActive),
+        "unknown storage rejected before any deletion: " + label);
+}
+// Вход xcore: Xray дополнительно монтирует каталог российских списков, он лежит под /opt/amnezia-xcore и удаляется вместе с ним.
+f = new(); f.AddXCore(); f.MountOverride["amnezia-xcore"] = [("bind", "/opt/amnezia-xcore/conf", "/etc/xcore"), ("bind", "/opt/amnezia-xcore/ops", "/etc/xcore-ops"), ("bind", "/opt/amnezia-xcore/geo", "/etc/xcore-geo")];
+job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.XCoreDirRemoved && !f.Containers.ContainsKey("amnezia-xcore"),
+    "xcore entry cleanup accepts the geo directory mount and removes the directory with the node");
+f = new(); f.AddXCore(); f.FailRemove = "amnezia-xcore-web"; job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && !f.XCoreDirRemoved && f.Containers.ContainsKey("amnezia-xcore-web"),
+    "failed Caddy removal keeps the xcore directory (certificates) for a retry");
+f.FailRemove = null; job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.XCoreDirRemoved && f.Server!.Protocols.Count == 0, "retry after partial xcore cleanup succeeds");
+f = new(); f.AddXCore(); f.Containers.Remove("amnezia-xcore-web"); job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.XCoreDirRemoved, "cleanup tolerates an already absent Caddy container");
+f = new(); f.AddXCore(); f.Server!.Protocols.Single(p => p.Kind == "xcore").ContainerName = "amnezia-xcore-web";
+await Reject(() => f.Queue(), "Caddy container is not accepted as a protocol container");
+f = new(); f.AddXCore(); f.Server!.DefaultProtocolId = "xc"; job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Keys.All(k => !k.IsActive), "default protocol pointing at xcore does not take legacy keys");
+f = new(); f.Server!.Protocols.Clear(); f.AddXCore(); f.Server.DefaultProtocolId = "xc"; f.Keys = [new() { ProtocolId = null }];
+job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.Commands.Count == 0 && f.Keys.All(k => k.IsActive),
+    "legacy key on an xcore-only node is reported, not silently assigned to xcore");
+f = new(); f.AddXCore(); f.Offline = true; job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true);
+await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null && f.Connections == 0 && !f.XCoreDirRemoved,
+    "deleting a node record with xcore never touches the node");
+
+
+// Топология xcore: очистка и удаление узла с xcore просят остальные узлы xcore синхронизироваться
+// (входы теряют выход, выходы — служебного пользователя входа); узел без xcore топологию не меняет.
+static VpnServer XNode(string id, string role, bool serving = true) => new() {
+    Id = id, Name = id, Protocols = [new() { Id = "p" + id, Kind = "xcore", ContainerName = "amnezia-xcore", Enabled = serving,
+        XCore = new() { Role = role, RouteId = role == "exit" ? 1 : null } }] };
+f = new(); f.AddXCore(); f.OtherNodes.AddRange([XNode("other-exit", "exit"), XNode("other-entry", "entry"), XNode("other-off", "exit", serving: false)]);
+job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+// Выключенный узел тоже: на нём живой Xray, и снятые с узла подписчики должны уйти и оттуда.
+Check(job.Status == InstallJobStatuses.Succeeded && f.SyncPublished.Order().SequenceEqual(["other-entry", "other-exit", "other-off"]),
+    "xcore cleanup asks every other installed xcore node to resync, disabled included: " + string.Join(",", f.SyncPublished));
+f = new(); f.AddXCore(); f.Offline = true; f.OtherNodes.Add(XNode("other-exit", "exit"));
+job = await f.Queue(InstallJobKinds.DeleteServer, forgetKeys: true); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server is null && f.SyncPublished.SequenceEqual(["other-exit"]),
+    "deleting a node with xcore asks the remaining xcore nodes to resync");
+f = new(); f.AddXCore(); f.FailRemove = "amnezia-xcore-web"; f.OtherNodes.Add(XNode("other-exit", "exit"));
+job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Failed && f.SyncPublished.SequenceEqual(["other-exit"]),
+    "a cleanup that failed midway still resyncs: the node's protocols were already switched off");
+f = new(); f.OtherNodes.Add(XNode("other-exit", "exit")); job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.SyncPublished.Count == 0, "cleanup of a node without xcore leaves the xcore topology alone");
+f = new(); f.AddXCore(); f.FailSyncPublish = true; f.OtherNodes.Add(XNode("other-exit", "exit")); job = await f.Queue(); await f.Service.ExecuteAsync(job, default);
+Check(job.Status == InstallJobStatuses.Succeeded && f.Server!.Protocols.Count == 0, "unavailable event queue does not fail an otherwise successful cleanup");
+
 f = new(); f.FailPublish = true;
 try { await f.Queue(); } catch (InvalidOperationException) { }
 Check(f.Jobs.Single().Status == InstallJobStatuses.Failed, "failed event publication does not leave pending job");
@@ -283,13 +359,32 @@ class Fixture {
     public List<string> Commands = [];
     public Dictionary<string, string> Containers = new() { ["amnezia-awg3"] = new('a', 64), ["amnezia-wireguard"] = new('b', 64), ["unrelated-app"] = new('c', 64) };
     public string? Partition;
+    // Другие узлы базы и события xcore.sync, которые очистка или удаление опубликовали для них.
+    public List<VpnServer> OtherNodes = [];
+    public List<string> SyncPublished = [];
+    public bool FailSyncPublish;
     public string? FailRemove;
-    public bool WritableMount, KeepContainer, FailPublish, Offline, FailDetach, FailDelete, FailPurge;
+    public bool WritableMount, KeepContainer, FailPublish, Offline, FailDetach, FailDelete, FailPurge, XCoreDirRemoved;
     public int Connections;
+    // Что docker inspect отдаёт для контейнеров xcore: заполняется AddXCore, а MountOverride подменяет отдельный контейнер.
+    public Dictionary<string, (string Source, string Destination)[]> XCoreMounts = [];
+    public Dictionary<string, List<(string Type, string Source, string Destination)>> MountOverride = [];
+
+    /// <summary>Узел с xcore: протокол в карточке и два контейнера с bind-путями из раскладки на узле.</summary>
+    public void AddXCore() {
+        Server!.Protocols.Add(new() { Id = "xc", Kind = "xcore", ContainerName = "amnezia-xcore" });
+        Containers["amnezia-xcore"] = new('d', 64);
+        Containers["amnezia-xcore-web"] = new('e', 64);
+        XCoreMounts["amnezia-xcore"] = [("/opt/amnezia-xcore/conf", "/etc/xcore"), ("/opt/amnezia-xcore/ops", "/etc/xcore-ops")];
+        XCoreMounts["amnezia-xcore-web"] = [("/opt/amnezia-xcore/caddy/Caddyfile", "/etc/caddy/Caddyfile"),
+            ("/opt/amnezia-xcore/caddy/site", "/srv/site"), ("/opt/amnezia-xcore/caddy/data", "/data"),
+            ("/opt/amnezia-xcore/caddy/config", "/config")];
+    }
     public ServerMaintenanceService Service;
     public Fixture() {
         var servers = Stub.Create<IVpnServerRepository>((m, a) => {
             if (m.Name == "GetByIdAsync") return Task.FromResult(Server);
+            if (m.Name == "GetAllAsync") return Task.FromResult<List<VpnServer>>(Server is null ? [.. OtherNodes] : [Server, .. OtherNodes]);
             if (m.Name == "DeleteAsync") { if (FailDelete) throw new InvalidOperationException(); Server = null; return Task.FromResult(true); }
             if (m.Name is "UpdateInstallationAsync" or "UpdateReconciliationAsync") return Task.CompletedTask;
             throw new Exception(m.Name);
@@ -329,10 +424,14 @@ class Fixture {
             if (command == "sudo docker ps -a --format '{{.Names}}'") return Task.FromResult(string.Join('\n', Containers.Keys));
             if (command.StartsWith("sudo docker inspect ")) {
                 var name = command.Split(' ')[^1];
+                List<(string Type, string Source, string Destination)> mounts;
+                if (MountOverride.TryGetValue(name, out var forced)) mounts = forced;
+                else if (XCoreMounts.TryGetValue(name, out var known)) mounts = [.. known.Select(m => ("bind", m.Source, m.Destination))];
+                else mounts = [("bind", WritableMount ? "/vpn-data" : "/lib/modules", WritableMount ? "/opt/amnezia" : "/lib/modules")];
                 return Task.FromResult(JsonSerializer.Serialize(new[] { new { Id = Containers[name], Name = "/" + name,
-                    Mounts = new[] { new { RW = true, Type = "bind", Source = WritableMount ? "/vpn-data" : "/lib/modules",
-                        Destination = WritableMount ? "/opt/amnezia" : "/lib/modules" } } } }));
+                    Mounts = mounts.Select(m => new { RW = true, m.Type, m.Source, m.Destination }).ToArray() } }));
             }
+            if (command == "sudo rm -rf /opt/amnezia-xcore") { XCoreDirRemoved = true; return Task.FromResult(""); }
             if (command.StartsWith("sudo docker rm -f -v ")) {
                 var name = Containers.Single(x => x.Value == command.Split(' ')[^1]).Key;
                 if (name == FailRemove) return Task.FromException<string>(new SshCommandException("cleanup_remove_container", 1, null, null));
@@ -347,7 +446,13 @@ class Fixture {
             return Task.FromResult(ssh);
         });
         var audit = Stub.Create<IAuditService>((m, a) => Task.CompletedTask);
-        Service = new(servers, clients, jobs, events, factory, audit);
+        var syncEvents = Stub.Create<IDomainEventPublisher>((m, a) => {
+            if (m.Name != "PublishIfNoPendingAsync") throw new Exception("Unexpected publish " + m.Name);
+            if (FailSyncPublish) throw new InvalidOperationException();
+            SyncPublished.Add((string)a[2]!); return Task.FromResult<DomainEvent?>(new DomainEvent());
+        });
+        Service = new(servers, clients, jobs, events, factory, audit,
+            new XCoreSyncPublisher(servers, syncEvents, NullLogger<XCoreSyncPublisher>.Instance));
     }
     public Task<InstallJob> Queue(string kind = InstallJobKinds.CleanupServer, string confirmation = "Test node", bool forgetKeys = false)
         => Service.EnqueueAsync("0123456789abcdef01234567", kind, confirmation, null, default, forgetKeys);

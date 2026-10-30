@@ -9,4 +9,7 @@ public static class RateLimitPolicies
     /// </summary>
     public const string Auth = "auth";
     public const string Refresh = "refresh";
+
+    /// <summary>Ссылка подписки /sub/{token}: анонимная, 30 запросов в минуту на токен (см. SubscriptionRateLimiting в Api).</summary>
+    public const string Subscription = "subscription";
 }

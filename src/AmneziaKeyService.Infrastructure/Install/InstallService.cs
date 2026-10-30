@@ -2,7 +2,9 @@ using System.Text.RegularExpressions;
 using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
 using AmneziaKeyService.Infrastructure.Scripts;
+using Microsoft.Extensions.Options;
 
 namespace AmneziaKeyService.Infrastructure.Install;
 
@@ -14,6 +16,7 @@ public partial class InstallService : IInstallService
     private readonly IProtocolInstallerRegistry _installers;
     private readonly ISshSessionFactory _sshFactory;
     private readonly ScriptRegistry _scripts;
+    private readonly IOptions<XCoreOptions> _xcore;
 
     public InstallService(
         IVpnServerRepository servers,
@@ -21,7 +24,8 @@ public partial class InstallService : IInstallService
         IDomainEventPublisher events,
         IProtocolInstallerRegistry installers,
         ISshSessionFactory sshFactory,
-        ScriptRegistry scripts)
+        ScriptRegistry scripts,
+        IOptions<XCoreOptions> xcore)
     {
         _servers = servers;
         _jobs       = jobs;
@@ -29,6 +33,7 @@ public partial class InstallService : IInstallService
         _installers = installers;
         _sshFactory = sshFactory;
         _scripts    = scripts;
+        _xcore      = xcore;
     }
 
     public async Task<InstallJob> EnqueueAsync(
@@ -45,8 +50,15 @@ public partial class InstallService : IInstallService
         }
 
         if (kind != InstallJobKinds.RemoveProtocol)
+        {
             ProtocolInstallRules.Prepare(await _servers.GetByIdAsync(serverId, ct)
                 ?? throw new NotFoundException("Сервер не найден."), spec);
+
+            // Без email установка xcore упала бы на шаге выпуска сертификата, уже после
+            // установки Docker; отказ здесь дешевле.
+            if (spec.Any(s => s.Kind == ProtocolKinds.XCore))
+                XCoreInput.RequireAcmeEmail(_xcore.Value.AcmeEmail);
+        }
 
         // Одновременно на узле может идти только одна установка: параллельные
         // docker build с одним именем контейнера затрут друг друга.

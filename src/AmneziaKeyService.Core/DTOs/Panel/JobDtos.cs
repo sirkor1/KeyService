@@ -65,6 +65,12 @@ public class ProtocolSpecRequest
     /// <summary>SNI для VLESS Reality.</summary>
     public string? SiteName { get; set; }
 
+    /// <summary>Домен узла xcore.</summary>
+    public string? Domain { get; set; }
+
+    /// <summary>Роль узла xcore: «exit» или «entry». Пусто — выход.</summary>
+    public string? Role { get; set; }
+
     public ProtocolSpec ToSpec() => new()
     {
         Kind          = Kind,
@@ -73,6 +79,8 @@ public class ProtocolSpecRequest
         SubnetAddress = SubnetAddress,
         SubnetCidr    = SubnetCidr,
         SiteName      = SiteName,
+        Domain        = Domain,
+        Role          = Role,
     };
 }
 

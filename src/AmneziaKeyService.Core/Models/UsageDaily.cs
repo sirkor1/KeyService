@@ -54,6 +54,33 @@ public class KeyUsageDaily
     public DateTime ExpireAt { get; set; }
 }
 
+/// <summary>
+/// Трафик подписки за сутки по всем узлам сразу. Коллекция subscription_usage_daily.
+/// Узла в ключе нет: _id — "{subscriptionId}:{yyyy-MM-dd}" (<see cref="UsageDailyKey.For(string, DateOnly)"/>),
+/// а разрез по узлам даёт server_usage_daily. RxBytes — полученное клиентом, TxBytes — отправленное.
+/// </summary>
+[BsonIgnoreExtraElements]
+public class SubscriptionUsageDaily
+{
+    [BsonId]
+    public string Id { get; set; } = default!;
+
+    [BsonElement("subscriptionId")]
+    public string SubscriptionId { get; set; } = default!;
+
+    [BsonElement("date")]
+    public string Date { get; set; } = default!;
+
+    [BsonElement("rxBytes")]
+    public long RxBytes { get; set; }
+
+    [BsonElement("txBytes")]
+    public long TxBytes { get; set; }
+
+    [BsonElement("expireAt")]
+    public DateTime ExpireAt { get; set; }
+}
+
 /// <summary>Трафик узла за сутки — сумма по всем его ключам. Коллекция server_usage_daily.</summary>
 [BsonIgnoreExtraElements]
 public class ServerUsageDaily

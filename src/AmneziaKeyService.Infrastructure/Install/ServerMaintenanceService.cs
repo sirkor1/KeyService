@@ -5,12 +5,15 @@ using System.Text.RegularExpressions;
 using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 
 namespace AmneziaKeyService.Infrastructure.Install;
 
 /// <summary>Executed by the event dispatcher under the same node lease as installation and key issuance.</summary>
 public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRepository clients,
-    IInstallJobRepository jobs, IDomainEventPublisher events, ISshSessionFactory sshFactory, IAuditService audit)
+    IInstallJobRepository jobs, IDomainEventPublisher events, ISshSessionFactory sshFactory, IAuditService audit,
+    XCoreSyncPublisher xcoreSync)
 {
     public async Task<InstallJob> EnqueueAsync(string id, string kind, string confirmation,
         string? actor, CancellationToken ct, bool forgetKeys = false)
@@ -59,6 +62,7 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
     {
         var progress = new InstallProgressReporter(jobs, job);
         VpnServer? server = null;
+        var hadXCore = false;
         var step = job.Steps.Single();
         try
         {
@@ -72,6 +76,7 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
             server = await servers.GetByIdAsync(job.ServerId, ct) ?? throw new NotFoundException("Сервер не найден.");
             if (job.MaintenanceRevision != Revision(server))
                 throw new BadRequestException("Параметры узла изменились после подтверждения. Откройте карточку и повторите операцию.");
+            hadXCore = server.Protocols.Any(p => p.Kind == ProtocolKinds.XCore);
 
             if (job.Kind == InstallJobKinds.DeleteServer)
             {
@@ -121,6 +126,11 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
         }
         finally
         {
+            // Узел с xcore исчез из топологии или хотя бы закрыт для неё: очистка помечает протоколы
+            // выключенными ещё до удаления контейнеров, поэтому и после сбоя посреди работы входы и
+            // выходы должны узнать об этом. Публикация после записи в базу и не бросает.
+            if (hadXCore) await xcoreSync.PublishForAllAsync(job.CreatedByUserId, CancellationToken.None);
+
             job.CurrentStepCode = null;
             job.FinishedAt = step.FinishedAt = DateTime.UtcNow;
             await jobs.UpdateAsync(job, CancellationToken.None);
@@ -138,23 +148,27 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
         await using var ssh = await sshFactory.ConnectAsync(server, ct);
         var present = await ListAsync(ssh, ct);
         var ids = new Dictionary<string, string>();
-        foreach (var protocol in server.Protocols.Where(p => present.Contains(p.ContainerName)))
+        // Caddy xcore не записан в protocols[] (это не протокол, а часть xcore), но живёт и
+        // умирает вместе с ним: его тоже нужно проверить и удалить по неизменяемому id.
+        string[] web = server.Protocols.Any(p => p.Kind == ProtocolKinds.XCore) ? [XCoreNode.WebContainer] : [];
+        var scope = server.Protocols.Select(p => p.ContainerName).Concat(web).Where(present.Contains);
+        foreach (var container in scope)
         {
-            var raw = await ssh.RunCheckedAsync($"sudo docker inspect {protocol.ContainerName}", "cleanup_inspect", ct);
+            var raw = await ssh.RunCheckedAsync($"sudo docker inspect {container}", "cleanup_inspect", ct);
             using var json = JsonDocument.Parse(raw);
             var item = json.RootElement[0];
             var id = item.GetProperty("Id").GetString() ?? "";
-            if (!Regex.IsMatch(id, "\\A[0-9a-f]{64}\\z") || item.GetProperty("Name").GetString() != "/" + protocol.ContainerName)
+            if (!Regex.IsMatch(id, "\\A[0-9a-f]{64}\\z") || item.GetProperty("Name").GetString() != "/" + container)
                 throw new BadRequestException("Не удалось проверить контейнер перед удалением.");
             // Upstream WG containers bind /lib/modules read-write. It is system data,
             // not VPN storage, and docker rm leaves it intact. Reject other mounts,
             // including read-only config mounts, because their keys would survive.
+            // xcore keeps its config, keys and certificates in /opt/amnezia-xcore, which
+            // cleanup removes itself, so exactly its known bind paths are allowed.
             if (item.GetProperty("Mounts").EnumerateArray().Any(m =>
-                m.GetProperty("Type").GetString() != "bind" ||
-                m.GetProperty("Destination").GetString() != "/lib/modules" ||
-                m.GetProperty("Source").GetString() is not ("/lib/modules" or "/usr/lib/modules")))
+                m.GetProperty("Type").GetString() != "bind" || !IsAllowedMount(container, m)))
                 throw new BadRequestException("В контейнере есть внешние каталоги или тома с данными. Автоматическая очистка такой конфигурации не поддерживается.");
-            ids.Add(protocol.ContainerName, id);
+            ids.Add(container, id);
         }
 
         // Keep the full protocol list until completion: after a crash, a new explicit
@@ -167,10 +181,18 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
         {
             await CheckCancellationAsync(job, ct);
             await progress.DetailAsync($"Удаление {p.ContainerName}", ct);
-            if (ids.TryGetValue(p.ContainerName, out var id))
-                await ssh.RunCheckedAsync($"sudo docker rm -f -v {id}", "cleanup_remove_container", ct);
-            if ((await ListAsync(ssh, ct)).Contains(p.ContainerName))
+            string[] owned = p.Kind == ProtocolKinds.XCore ? [p.ContainerName, XCoreNode.WebContainer] : [p.ContainerName];
+            foreach (var container in owned)
+                if (ids.TryGetValue(container, out var id))
+                    await ssh.RunCheckedAsync($"sudo docker rm -f -v {id}", "cleanup_remove_container", ct);
+            var after = await ListAsync(ssh, ct);
+            if (owned.Any(after.Contains))
                 throw new BadRequestException("Контейнер остался на узле или был создан заново. Очистка остановлена.");
+            // Каталог удаляется только после контейнеров: Caddy на удалённом каталоге
+            // успел бы заново создать в нём сертификаты. Для повторной очистки
+            // после сбоя rm -rf отсутствующего каталога безобиден.
+            if (p.Kind == ProtocolKinds.XCore)
+                await ssh.RunCheckedAsync($"sudo rm -rf {XCoreNode.Root}", "cleanup_remove_xcore_dir", ct);
             await clients.RevokeRemovedProtocolAsync(server.Id, p.Id, p.Id == legacyProtocolId,
                 job.CreatedByUserId, ct);
         }
@@ -200,9 +222,18 @@ public class ServerMaintenanceService(IVpnServerRepository servers, IVpnClientRe
             throw new BadRequestException("На узле остались неотозванные ключи. Выполните очистку, завершите отзыв или подтвердите удаление записи без отзыва ключей.");
     }
 
+    private static bool IsAllowedMount(string container, JsonElement mount)
+    {
+        var source = mount.GetProperty("Source").GetString();
+        var destination = mount.GetProperty("Destination").GetString();
+        return container is XCoreNode.XrayContainer or XCoreNode.WebContainer
+            ? XCoreNode.IsKnownMount(container, source, destination)
+            : destination == "/lib/modules" && source is "/lib/modules" or "/usr/lib/modules";
+    }
+
     public static void ValidateContainers(VpnServer server)
     {
-        var allowed = ProtocolKinds.All.Select(ProtocolKinds.DefaultContainerName).ToHashSet(StringComparer.Ordinal);
+        var allowed = ProtocolKinds.Installable.Select(ProtocolKinds.DefaultContainerName).ToHashSet(StringComparer.Ordinal);
         if (server.Protocols.Any(p => !allowed.Contains(p.ContainerName)) ||
             server.Protocols.Select(p => p.ContainerName).Distinct().Count() != server.Protocols.Count)
             throw new BadRequestException("Очистка поддерживает только стандартные контейнеры Amnezia без повторов.");

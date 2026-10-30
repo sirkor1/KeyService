@@ -16,8 +16,12 @@ import type {
   Paged,
   PanelSettings,
   ProtocolKind,
+  XCoreRole,
   ServerDetail,
   ServerListItem,
+  SubscriptionDetail,
+  SubscriptionLink,
+  SubscriptionListItem,
   UserListItem,
   PassCode,
   NotificationAudience,
@@ -54,6 +58,11 @@ export const servers = {
   addProtocol: (id: string, body: ProtocolSpecBody) => api.post<JobAccepted>(`/servers/${id}/protocols`, body),
   setProtocolEnabled: (id: string, protocolId: string, enabled: boolean) =>
     api.put<void>(`/servers/${id}/protocols/${protocolId}/availability`, { enabled }),
+  updateXCoreSettings: (id: string, protocolId: string, body: XCoreSettingsBody) =>
+    api.put<void>(`/servers/${id}/protocols/${protocolId}/xcore`, body),
+  /** «Обновить списки сейчас»: ставит обновление в очередь worker, ответ 202 без тела. */
+  updateXCoreRfLists: (id: string, protocolId: string) =>
+    api.post<void>(`/servers/${id}/protocols/${protocolId}/xcore/rf-lists/update`),
 
   list: (params: ServerListParams = {}) =>
     api.get<Paged<ServerListItem>>('/servers', { ...params }),
@@ -81,6 +90,26 @@ export interface ProtocolSpecBody {
   subnetAddress?: string;
   subnetCidr?: string;
   siteName?: string;
+  /** Домен узла xcore (обязателен для него). */
+  domain?: string;
+  /** Роль xcore; не передана — сервер ставит «выход». */
+  role?: XCoreRole;
+}
+
+/**
+ * Настройки xcore (PUT). Поля входа выходу передавать нельзя — сервер ответит отказом. У входа домен подписки
+ * передаётся всегда: null снимает его.
+ */
+export interface XCoreSettingsBody {
+  title: string | null;
+  sortOrder: number;
+  subscriptionEnabled: boolean;
+  ruDirect?: boolean;
+  directDomains?: string[];
+  proxyDomains?: string[];
+  subscriptionHost?: string | null;
+  /** Не передано — без изменений. true создаёт ключи на узле (нужен доступ по SSH), false стирает их. */
+  vlessEncryption?: boolean;
 }
 
 export interface DiscoveredProtocol {
@@ -172,6 +201,45 @@ export const keys = {
 
   /** Ссылка на скачивание. Идёт напрямую браузером — кука уедет сама. */
   downloadUrl: (id: string) => `/api/keys/${id}/download?format=conf`,
+};
+
+export interface SubscriptionListParams extends ListParams {
+  status?: string;
+  userId?: string;
+}
+
+export interface CreateSubscriptionBody {
+  userId: string;
+  /** Не передано — из настроек панели, 0 — бессрочно. */
+  expiryDays?: number;
+  /** Не передано — из настроек панели, 0 — без ограничения. */
+  trafficLimitBytes?: number;
+}
+
+/** Новые границы заменяют прежние целиком: null снимает ограничение. */
+export interface UpdateSubscriptionLimitsBody {
+  expiresAt: string | null;
+  trafficLimitBytes: number | null;
+}
+
+export const subscriptions = {
+  list: (params: SubscriptionListParams = {}) =>
+    api.get<Paged<SubscriptionListItem>>('/subscriptions', { ...params }),
+
+  detail: (id: string) => api.get<SubscriptionDetail>(`/subscriptions/${id}`),
+
+  /** Ссылка подписки — секрет, отвечает с no-store. Запрашивается только по действию оператора. */
+  link: (id: string) => api.get<SubscriptionLink>(`/subscriptions/${id}/link`),
+
+  create: (body: CreateSubscriptionBody) => api.post<SubscriptionDetail>('/subscriptions', body),
+
+  revoke: (id: string) => api.post<SubscriptionDetail>(`/subscriptions/${id}/revoke`),
+
+  /** Меняет токен и UUID: прежняя ссылка и все настроенные по ней устройства перестают работать. */
+  regenerate: (id: string) => api.post<SubscriptionDetail>(`/subscriptions/${id}/regenerate`),
+
+  updateLimits: (id: string, body: UpdateSubscriptionLimitsBody) =>
+    api.put<SubscriptionDetail>(`/subscriptions/${id}/limits`, body),
 };
 
 export const events = {

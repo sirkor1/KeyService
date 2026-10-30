@@ -22,11 +22,17 @@ const checks = [
   ['SSH test is invalidated by connection changes', 'src/pages/add-server/AddServerPage.tsx', 'connectionFingerprint'],
   ['SSH test clears stale result before a new request', 'src/pages/add-server/AddServerPage.tsx', 'onMutate: () => setTest(null)'],
   ['Wizard navigation is locked while SSH test runs', 'src/pages/add-server/AddServerPage.tsx', 'disabled={connectionTest.isPending || install.isPending || Boolean(jobId)}'],
+  ['xcore settings form is busy while saving', 'src/pages/XCoreSettings.tsx', 'aria-busy={save.isPending}'],
+  ['xcore settings toggle exposes its expanded state', 'src/pages/XCoreSettings.tsx', 'aria-expanded={open}'],
+  ['xcore invalid fields are flagged and linked to their error', 'src/pages/XCoreSettings.tsx', "'aria-invalid': error ? true : undefined"],
+  ['xcore field errors are announced', 'src/pages/XCoreSettings.tsx', 'className={styles.fieldError} role="alert"'],
+  ['xcore role choice is a labelled radio group', 'src/components/XCoreRoleField.tsx', '<legend'],
 ];
 
 const routeChecks = [
   ['Servers use exclusive query states', 'src/pages/ServersPage.tsx'],
   ['Keys use exclusive query states', 'src/pages/KeysPage.tsx'],
+  ['Subscriptions use exclusive query states', 'src/pages/SubscriptionsPage.tsx'],
   ['Users use exclusive query states', 'src/pages/UsersPage.tsx'],
   ['Passcodes use exclusive query states', 'src/pages/PassCodesPage.tsx'],
   ['Logs use exclusive query states', 'src/pages/LogsPage.tsx'],

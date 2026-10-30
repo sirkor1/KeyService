@@ -46,6 +46,19 @@ Dockerfile upstream сохранён дословно, но при загруз�
 При обновлении upstream: сверить файлы заново и прогнать проверку формата
 (`tools/verify-vpn-uri`), а не править шаблоны руками.
 
+## xcore — не из upstream
+
+Протокол `xcore` (свой Xray-core для подписок Happ) в amnezia-client не существует:
+его конфиг генерируется в C# (`Infrastructure/Protocols/XCore`), а не берётся из
+этого каталога. Правило «дословно» к нему не относится, AmneziaVPN его конфиги не
+читает, и в выдаче `vpn://` он не участвует.
+
+То же относится к `xcore/Caddyfile` и `xcore/index.html`: это наши файлы, а не копии
+upstream. Caddyfile рендерится подстановкой `$DOMAIN` и `$ACME_EMAIL` (`ScriptTemplateRenderer`)
+и прошёл `caddy validate` на образе, закреплённом в `XCoreNode.CaddyImage`; `index.html` —
+нейтральная страница-заглушка для self-steal, без упоминаний VPN. Править их можно свободно,
+но Caddyfile после правки нужно заново прогнать через `caddy validate`.
+
 ## Подстановка переменных
 
 Токены соответствуют `ServerController::genVarsForScript` в

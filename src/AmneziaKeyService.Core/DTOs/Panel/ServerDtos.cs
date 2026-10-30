@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using AmneziaKeyService.Core.Models;
 
 namespace AmneziaKeyService.Core.DTOs.Panel;
@@ -25,7 +26,7 @@ public record ServerListItemDto(
         server.Provider,
         server.Ssh.Port,
         server.Ssh.AuthType,
-        [.. server.Protocols.Select(p => ProtocolSummaryDto.From(p) with { Enabled = server.CanIssue(p) })],
+        [.. server.Protocols.Select(p => ProtocolSummaryDto.From(p) with { Enabled = server.IsServing(p) })],
         keysCount,
         server.Health?.LoadPercent,
         trafficBytes,
@@ -65,7 +66,7 @@ public record ServerDetailDto(
         s.Id, s.Name, s.Host, s.Geo, s.Provider, s.Note, s.KeyLimit, s.Status,
         s.Dns1, s.Dns2,
         SshInfoDto.From(s.Ssh),
-        [.. s.Protocols.Select(p => ProtocolDetailDto.From(p) with { Enabled = s.CanIssue(p) })],
+        [.. s.Protocols.Select(p => ProtocolDetailDto.From(p) with { Enabled = s.IsServing(p) })],
         s.DefaultProtocolId,
         s.Health is null ? null : ServerHealthDto.From(s.Health),
         kpi,
@@ -111,6 +112,9 @@ public record ProtocolDetailDto(
     bool IsCached,
     WgInfoDto? Wg,
     XrayInfoDto? Xray,
+    // Имя задано явно: по умолчанию camelCase даёт «xCore», а панель и все остальные
+    // упоминания вида в системе пишут «xcore» (ProtocolKinds.XCore).
+    [property: JsonPropertyName("xcore")] XCoreInfoDto? XCore,
     DateTime? InstalledAt,
     DateTime? LastSyncedAt)
 {
@@ -128,6 +132,7 @@ public record ProtocolDetailDto(
         p.Wg?.IsCached ?? p.Xray?.IsCached ?? false,
         p.Wg is null ? null : WgInfoDto.From(p.Wg),
         p.Xray is null ? null : XrayInfoDto.From(p.Xray),
+        p.XCore is null ? null : XCoreInfoDto.From(p.XCore),
         p.InstalledAt,
         p.LastSyncedAt);
 }
@@ -156,6 +161,47 @@ public record ObfuscationDto(string Jc, string Jmin, string Jmax, string Mtu)
 public record XrayInfoDto(string SiteName, string? PublicKey, string? ShortId)
 {
     public static XrayInfoDto From(XrayProtocolParams x) => new(x.SiteName, x.PublicKey, x.ShortId);
+}
+
+/// <summary>
+/// Параметры xcore для карточки узла. Только то, что безопасно показать: приватного ключа
+/// Reality, служебного UUID входа, shortId и пути XHTTP здесь нет. Состояние применения
+/// (<c>AppliedAt</c>, <c>SyncError</c>) нужно оператору, чтобы увидеть, что отзыв или выдача ещё не
+/// дошли до узла. Поля маршрутизации (<c>RuDirect</c>, списки доменов, <c>SubscriptionHost</c>) заполнены
+/// только у входа, <c>RouteId</c> — только у выхода; <c>ExitHealth</c> и состояние российских списков
+/// (<c>RfListsTag</c>, <c>RfListsAppliedAt</c>, <c>RfListsCheckedAt</c>, <c>GeoError</c>) — только у входа.
+/// </summary>
+public record XCoreInfoDto(
+    string Role,
+    string Domain,
+    string? Title,
+    bool SubscriptionEnabled,
+    DateTime? AppliedAt,
+    string? SyncError,
+    int? RouteId,
+    int SortOrder,
+    bool RuDirect,
+    IReadOnlyList<string> DirectDomains,
+    IReadOnlyList<string> ProxyDomains,
+    string? SubscriptionHost,
+    IReadOnlyList<XCoreExitHealthDto> ExitHealth,
+    string? RfListsTag,
+    DateTime? RfListsAppliedAt,
+    DateTime? RfListsCheckedAt,
+    string? GeoError,
+    bool VlessEncryption)
+{
+    public static XCoreInfoDto From(XCoreProtocolParams x) => new(
+        x.Role, x.Domain, x.Title, x.SubscriptionEnabled, x.AppliedAt, x.SyncError,
+        x.RouteId, x.SortOrder, x.RuDirect, [.. x.DirectDomains], [.. x.ProxyDomains], x.SubscriptionHost,
+        [.. x.ExitHealth.Select(XCoreExitHealthDto.From)],
+        x.RfListsTag, x.RfListsAppliedAt, x.RfListsCheckedAt, x.GeoError, x.VlessEncryption);
+}
+
+/// <summary>Состояние плеча вход → выход: открыто ли оно на уровне TCP и TLS по последней проверке.</summary>
+public record XCoreExitHealthDto(string ServerId, bool Ok, DateTime CheckedAt, string? Error)
+{
+    public static XCoreExitHealthDto From(XCoreExitHealth h) => new(h.ServerId, h.Ok, h.CheckedAt, h.Error);
 }
 
 public record ServerHealthDto(

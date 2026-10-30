@@ -20,6 +20,10 @@ public interface IUsageRepository
     Task IncrementKeysAsync(
         IReadOnlyCollection<UsageDelta> deltas, DateOnly day, CancellationToken ct = default);
 
+    /// <summary>Добавляет приращение по подписке в её суточный срез (по всем узлам сразу).</summary>
+    Task IncrementSubscriptionAsync(
+        string subscriptionId, DateOnly day, long rxBytes, long txBytes, CancellationToken ct = default);
+
     /// <summary>Добавляет приращение по узлу — сумму за тот же тик.</summary>
     Task IncrementServerAsync(
         string serverId, DateOnly day, long rxBytes, long txBytes, CancellationToken ct = default);

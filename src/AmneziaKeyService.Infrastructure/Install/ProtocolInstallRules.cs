@@ -2,6 +2,7 @@ using System.Net;
 using AmneziaKeyService.Core.Exceptions;
 using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.Protocols;
+using AmneziaKeyService.Infrastructure.Protocols.XCore;
 
 namespace AmneziaKeyService.Infrastructure.Install;
 
@@ -14,11 +15,19 @@ public static class ProtocolInstallRules
         var ports = server.Protocols.Select(p => p.Port).ToHashSet(StringComparer.Ordinal);
         var ranges = server.Protocols.Where(p => p.Wg is not null)
             .Select(p => Range(p.Wg!.SubnetAddress, p.Wg.SubnetCidr)).ToList();
+        // Caddy xcore держит 80 для ACME, но в ProtocolInstance.Port он не отражён: без этого
+        // другой протокол мог бы занять 80, и сертификат перестал бы продлеваться.
+        if (server.Protocols.Any(p => p.Kind == ProtocolKinds.XCore)) ports.Add(XCoreNode.AcmePort);
         foreach (var spec in specs)
         {
-            if (!ProtocolKinds.All.Contains(spec.Kind)) throw new BadRequestException("Неизвестный протокол.");
+            if (!ProtocolKinds.Installable.Contains(spec.Kind)) throw new BadRequestException("Неизвестный протокол.");
             if (!containers.Add(ProtocolKinds.DefaultContainerName(spec.Kind)) || server.Protocols.Any(p => p.Kind == spec.Kind))
                 throw new BadRequestException("Эта версия протокола уже установлена. Существующий контейнер и ключи сохраняются.");
+            if (spec.Kind == ProtocolKinds.XCore)
+            {
+                PrepareXCore(spec, ports);
+                continue;
+            }
             if (spec.Port is null)
             {
                 do { spec.Port = ScriptVars.RandomPort(); } while (ports.Contains(spec.Port));
@@ -43,6 +52,32 @@ public static class ProtocolInstallRules
             if (ranges.Any(r => Overlaps(r, candidate))) throw new BadRequestException("Подсеть пересекается с другим протоколом сервера.");
             ranges.Add(candidate);
         }
+    }
+
+    /// <summary>
+    /// xcore всегда на 443 (Reality выглядит обычным HTTPS только там) и занимает 80
+    /// под ACME. Порт не выбирается случайно, как у остальных, поэтому и проверяется
+    /// отдельно: любой протокол узла на 443 или 80 — включая amnezia-xray — отказ.
+    /// Транспорт не различаем: UDP на этих портах встречается только при ручном выборе,
+    /// а объяснять оператору, почему «443» бывает занят не целиком, дороже, чем отказ.
+    /// </summary>
+    private static void PrepareXCore(ProtocolSpec spec, HashSet<string> ports)
+    {
+        if (spec.Port is not null && spec.Port != XCoreNode.HttpsPort)
+            throw new BadRequestException("xcore работает только на порту 443.");
+        spec.Port = XCoreNode.HttpsPort;
+        if (ports.Contains(XCoreNode.HttpsPort) || ports.Contains(XCoreNode.AcmePort))
+            throw new BadRequestException(
+                "Порты 443 и 80 нужны xcore, но на узле их уже занимает другой протокол. " +
+                "Удалите его или поставьте xcore на другой узел.");
+        ports.Add(XCoreNode.HttpsPort);
+        ports.Add(XCoreNode.AcmePort);
+
+        if (string.IsNullOrWhiteSpace(spec.Role)) spec.Role = XCoreRoles.Exit;
+        if (spec.Role is not (XCoreRoles.Exit or XCoreRoles.Entry))
+            throw new BadRequestException("Неизвестная роль xcore: допустимы «exit» и «entry».");
+
+        spec.Domain = XCoreInput.RequireDomain(spec.Domain);
     }
 
     private static bool Overlaps((uint Start, uint End) a, (uint Start, uint End) b) => a.Start <= b.End && b.Start <= a.End;

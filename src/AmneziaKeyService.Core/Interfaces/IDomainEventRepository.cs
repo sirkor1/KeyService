@@ -24,6 +24,28 @@ public interface IDomainEventPublisher
         string? correlationId = null,
         string? actorUserId = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Публикует событие, если для той же пары «тип + партиция» нет ожидающего (pending).
+    /// Ожидающее ещё не захвачено, и его обработчик прочтёт базу позже нашей правки — значит,
+    /// подхватит и её. Захваченное (в работе) не в счёт: его снимок мог устареть.
+    /// Null — новое событие не создано, потому что ожидающее уже есть.
+    ///
+    /// Порядок обязателен для вызывающего: сначала запись изменения в базу, потом публикация.
+    /// Иначе обработчик мог бы захватить ожидающее событие до записи, а мы решили бы, что он
+    /// увидит правку.
+    ///
+    /// Проверка и вставка — один <c>findOneAndUpdate</c> с upsert, без транзакции. Без
+    /// уникального индекса два одновременных вызова могут оба вставить событие: лишний
+    /// запуск обработчика допустим, пропущенный — нет.
+    /// </summary>
+    Task<DomainEvent?> PublishIfNoPendingAsync(
+        string type,
+        object payload,
+        string partitionKey,
+        string? correlationId = null,
+        string? actorUserId = null,
+        CancellationToken ct = default);
 }
 
 /// <summary>Очередь работ поверх коллекции domain_events.</summary>

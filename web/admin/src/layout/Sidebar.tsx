@@ -34,6 +34,7 @@ function buildGroups(summary: DashboardSummary | undefined, canAdmin: boolean, c
         { to: '/servers', label: 'Серверы', ...(badges ? { badge: badges.servers } : {}) },
         { to: '/servers/add', label: 'Добавить сервер' },
         { to: '/keys', label: 'Ключи', ...(badges ? { badge: badges.keys } : {}) },
+        { to: '/subscriptions', label: 'Подписки' },
       ],
     },
     {

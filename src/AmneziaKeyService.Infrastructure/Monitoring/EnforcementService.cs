@@ -1,6 +1,7 @@
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
 using AmneziaKeyService.Infrastructure.Services;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -42,6 +43,7 @@ public class EnforcementService : PeriodicWorker
     protected override async Task TickAsync(IServiceProvider services, CancellationToken ct)
     {
         await RevokeDueAsync(services, ct);
+        await RevokeDueSubscriptionsAsync(services, ct);
         await RetryPendingAsync(services, ct);
         await WarnExpiringAsync(services, ct);
     }
@@ -64,6 +66,26 @@ public class EnforcementService : PeriodicWorker
             var reason = client.IsExpired ? RevokeReasons.Expired : RevokeReasons.Quota;
 
             await RevokeAsync(services, client, reason, ct);
+        }
+    }
+
+    /// <summary>
+    /// Подписки: истёкший срок и исчерпанная квота. Отдельный шаг со своим перехватом ошибок —
+    /// сбой здесь не должен лишать тик дожима застрявших отзывов ключей, который идёт после него.
+    /// </summary>
+    private async Task RevokeDueSubscriptionsAsync(IServiceProvider services, CancellationToken ct)
+    {
+        try
+        {
+            var revoked = await services.GetRequiredService<SubscriptionService>()
+                .RevokeDueAsync(DateTime.UtcNow, ct);
+
+            if (revoked > 0)
+                Logger.LogInformation("Подписок отозвано автоматически: {Count}.", revoked);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.LogError(ex, "Не удалось отозвать подписки с истёкшим сроком или квотой.");
         }
     }
 

@@ -9,6 +9,19 @@ namespace AmneziaKeyService.Core.Models;
 /// </summary>
 public record ServerInstallPayload(string JobId);
 
+/// <summary>
+/// Синхронизация узла xcore. Списка пользователей в аргументах нет: обработчик читает базу
+/// в момент работы, поэтому одно событие подхватывает все правки, сделанные до него.
+/// </summary>
+public record XCoreSyncPayload(string ServerId, string ProtocolId);
+
+/// <summary>
+/// Обновление geo-списков входа. <paramref name="Tag"/> — релиз, который определил worker; null
+/// (кнопка в панели: у api нет доступа к GitHub по расписанию worker) значит «последний», и тег
+/// обработчик узнаёт сам.
+/// </summary>
+public record XCoreGeoUpdatePayload(string ServerId, string ProtocolId, string? Tag);
+
 /// <summary>Куда в Telegram доставить уведомление: чат и, если есть, сообщение для правки.</summary>
 public record TelegramTarget(long ChatId, int? MessageId);
 

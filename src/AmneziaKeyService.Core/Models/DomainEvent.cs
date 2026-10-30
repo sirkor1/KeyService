@@ -130,6 +130,20 @@ public static class DomainEventTypes
     public const string KeyIssue  = "key.issue";
     public const string KeyRevoke = "key.revoke";
 
+    /// <summary>
+    /// Привести узел xcore к актуальному списку подписчиков. Партиция — узел; публикуется
+    /// через <c>PublishIfNoPendingAsync</c>, чтобы не плодить события на каждую правку.
+    /// </summary>
+    public const string XCoreSync = "xcore.sync";
+
+    /// <summary>
+    /// Обновить российские geo-списки на входе xcore. Партиция та же, что у <see cref="XCoreSync"/> (узел):
+    /// скачивание, подмена файлов и перезапуск Xray не должны идти параллельно с синхронизацией того же узла.
+    /// Отдельный тип, а не флаг в xcore.sync: у него своя политика повторов и своё поле ошибки (<c>geoError</c>),
+    /// которое не стирается очередной успешной синхронизацией подписчиков.
+    /// </summary>
+    public const string XCoreGeoUpdate = "xcore.geo_update";
+
     /// <summary>Уведомления потребляет бот, а не worker.</summary>
     public const string NotifyKeyIssued = "notify.key_issued";
 }

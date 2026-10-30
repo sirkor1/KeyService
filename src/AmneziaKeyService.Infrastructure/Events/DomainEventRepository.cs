@@ -48,6 +48,50 @@ public class DomainEventRepository : IDomainEventRepository
         return evt;
     }
 
+    public async Task<DomainEvent?> PublishIfNoPendingAsync(
+        string type,
+        object payload,
+        string partitionKey,
+        string? correlationId = null,
+        string? actorUserId = null,
+        CancellationToken ct = default)
+    {
+        var b = Builders<DomainEvent>.Filter;
+        var now = DateTime.UtcNow;
+        var newId = ObjectId.GenerateNewId();
+
+        // Один findOneAndUpdate с upsert: если ожидающее событие есть, обновление не меняет
+        // ничего ($setOnInsert срабатывает только при вставке), иначе вставляется наше.
+        // Поля из фильтра (тип, партиция, статус) при upsert попадают в новый документ сами.
+        // Две отдельные операции «найти» и «вставить» оставили бы окно, в которое успевает
+        // вклиниться второй продюсер; здесь окно сводится к гонке двух upsert-ов без
+        // уникального индекса — худшее, что она даёт, лишнее событие.
+        var update = Builders<DomainEvent>.Update
+            .SetOnInsert("_id", newId)
+            .SetOnInsert(x => x.Payload, payload.ToBsonDocument(payload.GetType()))
+            .SetOnInsert(x => x.Attempt, 0)
+            .SetOnInsert(x => x.MaxAttempts, 1)
+            .SetOnInsert(x => x.AvailableAt, now)
+            .SetOnInsert(x => x.CreatedAt, now);
+        if (correlationId is not null) update = update.SetOnInsert(x => x.CorrelationId, correlationId);
+        if (actorUserId is not null) update = update.SetOnInsert(x => x.ActorUserId, actorUserId);
+
+        var found = await _events.FindOneAndUpdateAsync(
+            b.And(
+                b.Eq(x => x.Type, type),
+                b.Eq(x => x.PartitionKey, partitionKey),
+                b.Eq(x => x.Status, DomainEventStatuses.Pending)),
+            update,
+            new FindOneAndUpdateOptions<DomainEvent>
+            {
+                IsUpsert       = true,
+                ReturnDocument = ReturnDocument.After,
+            }, ct);
+
+        // Вставили мы или нашли чужое — видно по идентификатору.
+        return found.Id == newId.ToString() ? found : null;
+    }
+
     public async Task<DomainEvent?> GetByIdAsync(string id, CancellationToken ct = default)
     {
         // Невалидный ObjectId — это «не найдено», а не ошибка: id приходит из URL.

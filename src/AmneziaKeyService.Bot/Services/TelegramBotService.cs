@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using AmneziaKeyService.Core.DTOs;
 using AmneziaKeyService.Core.Interfaces;
 using AmneziaKeyService.Core.Models;
+using AmneziaKeyService.Infrastructure.Subscriptions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types;
@@ -23,9 +25,10 @@ public class TelegramBotService : IHostedService
     private readonly IVpnClientRepository _clients;
     private readonly IDomainEventPublisher _events;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SubscriptionOptions _subscriptionOptions;
     private readonly ILogger<TelegramBotService> _logger;
 
-    private const int CopyTextButtonMaxLength = 256;
+    private const int CopyTextButtonMaxLength = SubscriptionBotMessages.CopyTextMaxLength;
     private const int TelegramMessageMaxLength = 4096;
 
     private static readonly BotCommand[] PrivateChatCommands =
@@ -59,17 +62,19 @@ public class TelegramBotService : IHostedService
         IVpnClientRepository clients,
         IDomainEventPublisher events,
         IServiceScopeFactory scopeFactory,
+        IOptions<SubscriptionOptions> subscriptionOptions,
         ILogger<TelegramBotService> logger,
         ITelegramBotClient? bot = null)
     {
-        _users        = users;
-        _passCodes    = passCodes;
-        _servers      = servers;
-        _clients      = clients;
-        _events       = events;
-        _scopeFactory = scopeFactory;
-        _logger       = logger;
-        _bot          = bot;
+        _users               = users;
+        _passCodes           = passCodes;
+        _servers             = servers;
+        _clients             = clients;
+        _events              = events;
+        _scopeFactory        = scopeFactory;
+        _subscriptionOptions = subscriptionOptions.Value;
+        _logger              = logger;
+        _bot                 = bot;
     }
 
     // ── IHostedService ────────────────────────────────────────────────────────
@@ -447,6 +452,10 @@ public class TelegramBotService : IHostedService
                 await ShowMyKeysAsync(bot, chatId, messageId, user.Id, ct);
                 break;
 
+            case SubscriptionBotMessages.MenuCallback:
+                await ShowSubscriptionAsync(bot, chatId, messageId, user.Id, ct);
+                break;
+
             default:
                 if (data.StartsWith("router:"))
                 {
@@ -485,11 +494,120 @@ public class TelegramBotService : IHostedService
 
     // ── Screens ───────────────────────────────────────────────────────────────
 
-    private static Task SendMainMenuAsync(ITelegramBotClient bot, long chatId, string text, CancellationToken ct)
-        => bot.SendMessage(chatId, text, replyMarkup: MainMenuKeyboard(), cancellationToken: ct);
+    private async Task SendMainMenuAsync(ITelegramBotClient bot, long chatId, string text, CancellationToken ct)
+        => await bot.SendMessage(chatId, text, replyMarkup: await MainMenuKeyboardAsync(ct), cancellationToken: ct);
 
-    private static Task EditMainMenuAsync(ITelegramBotClient bot, long chatId, int messageId, string text, CancellationToken ct)
-        => bot.EditMessageText(chatId, messageId, text, replyMarkup: MainMenuKeyboard(), cancellationToken: ct);
+    private async Task EditMainMenuAsync(ITelegramBotClient bot, long chatId, int messageId, string text, CancellationToken ct)
+        => await bot.EditMessageText(chatId, messageId, text, replyMarkup: await MainMenuKeyboardAsync(ct), cancellationToken: ct);
+
+    /// <summary>
+    /// Кнопка подписки показывается, только если есть узел, на который она ведёт: без него ссылка
+    /// открыла бы в Happ пустой список. Сбой чтения узлов не должен ломать меню, которым бот
+    /// пользовались до появления подписок, — тогда кнопки просто нет.
+    /// </summary>
+    private async Task<bool> HasSubscriptionNodesAsync(CancellationToken ct)
+    {
+        try
+        {
+            return XCoreSyncPublisher.SubscriptionExits(await _servers.GetAllAsync(ct)).Any();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Не удалось определить, есть ли узлы для подписок: кнопка скрыта.");
+            return false;
+        }
+    }
+
+    private async Task ShowSubscriptionAsync(
+        ITelegramBotClient bot, long chatId, int messageId, string userId, CancellationToken ct)
+    {
+        bool linkAvailable;
+        using (var probeScope = _scopeFactory.CreateScope())
+            linkAvailable = await probeScope.ServiceProvider.GetRequiredService<SubscriptionService>().CanBuildLinkAsync(ct);
+        if (!linkAvailable)
+        {
+            // Токен в сообщение лога не попадает: его ещё нет, а настройка — не секрет.
+            _logger.LogWarning(
+                "Subscription:PublicBaseUrl не задан или некорректен и ни у одного входа нет домена подписки: подписки через бота недоступны.");
+            await ShowSubscriptionTextAsync(bot, chatId, messageId, SubscriptionBotMessages.Unavailable, null, ct);
+            return;
+        }
+
+        if (!await HasSubscriptionNodesAsync(ct))
+        {
+            _logger.LogWarning("Нет узлов xcore для подписок: пользователю {UserId} подписка не выдана.", userId);
+            await ShowSubscriptionTextAsync(bot, chatId, messageId, SubscriptionBotMessages.Unavailable, null, ct);
+            return;
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<SubscriptionService>();
+
+            switch (await service.GetOrCreateForUserAsync(userId, KeySources.Telegram, ct))
+            {
+                case SelfServiceSubscriptionResult.Granted granted:
+                    var link = await service.BuildLinkAsync(granted.Subscription, ct);
+                    var copy = link.Length <= CopyTextButtonMaxLength
+                        ? InlineKeyboardButton.WithCopyText("📋 Скопировать ссылку", link)
+                        : null;
+                    await ShowSubscriptionTextAsync(bot, chatId, messageId,
+                        SubscriptionBotMessages.Granted(granted.Subscription, link), copy, ct);
+                    if (granted.Subscription.IsServing(DateTime.UtcNow))
+                        await SendSubscriptionQrAsync(bot, chatId, link, ct);
+                    break;
+
+                case SelfServiceSubscriptionResult.Denied denied:
+                    await ShowSubscriptionTextAsync(bot, chatId, messageId,
+                        SubscriptionBotMessages.Denied(denied.Reason), null, ct);
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // В ex.Message токена нет, но и ссылку в лог не кладём ни при каких обстоятельствах.
+            _logger.LogWarning(ex, "Не удалось выдать подписку пользователю {UserId}", userId);
+            await ShowSubscriptionTextAsync(bot, chatId, messageId,
+                "Не удалось получить подписку. Попробуйте позже.", null, ct);
+        }
+    }
+
+    /// <summary>
+    /// QR-код ссылки отдельным сообщением. Это дополнение к тексту, а не его часть: сбой генерации
+    /// или отправки картинки не должен превращать выданную подписку в «Не удалось получить подписку».
+    /// В лог идёт только тип ошибки — ни ссылка, ни картинка, ни исключение целиком (в сообщении
+    /// Telegram.Bot может оказаться содержимое запроса).
+    /// </summary>
+    private async Task SendSubscriptionQrAsync(
+        ITelegramBotClient bot, long chatId, string link, CancellationToken ct)
+    {
+        try
+        {
+            using var png = new MemoryStream(SubscriptionQr.RenderPng(link));
+            await bot.SendPhoto(chatId, InputFile.FromStream(png, "subscription-qr.png"),
+                caption: SubscriptionBotMessages.QrCaption, cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning("Не удалось отправить QR-код подписки: {ErrorType}.", ex.GetType().Name);
+        }
+    }
+
+    private static Task ShowSubscriptionTextAsync(
+        ITelegramBotClient bot, long chatId, int messageId, string text,
+        InlineKeyboardButton? copyButton, CancellationToken ct)
+    {
+        var rows = new List<InlineKeyboardButton[]>();
+        if (copyButton is not null) rows.Add([copyButton]);
+        rows.Add([InlineKeyboardButton.WithCallbackData("⬅️ Назад", "cmd:menu")]);
+
+        // Предпросмотр сайта Happ под ссылкой подписки — шум, а на ссылке подписки он бесполезен.
+        return bot.EditMessageText(chatId, messageId, text,
+            replyMarkup: new InlineKeyboardMarkup(rows),
+            linkPreviewOptions: new LinkPreviewOptions { IsDisabled = true },
+            cancellationToken: ct);
+    }
 
     private async Task SendServerListAsync(ITelegramBotClient bot, long chatId, CancellationToken ct)
     {
@@ -913,12 +1031,20 @@ public class TelegramBotService : IHostedService
         await bot.SendMessage(chatId, saved ? "Настройки уведомлений сохранены." : "Состояние изменилось. Повторите действие через /routers.", cancellationToken: ct);
     }
 
-    private static InlineKeyboardMarkup MainMenuKeyboard() => new(new[]
+    private async Task<InlineKeyboardMarkup> MainMenuKeyboardAsync(CancellationToken ct)
     {
-        new[] { InlineKeyboardButton.WithCallbackData("📋 Список серверов", "cmd:servers") },
-        new[] { InlineKeyboardButton.WithCallbackData("🔑 Мои ключи",       "cmd:mykeys") },
-        new[] { InlineKeyboardButton.WithCallbackData("📡 Мои роутеры",      "cmd:routers") }
-    });
+        var rows = new List<InlineKeyboardButton[]>
+        {
+            new[] { InlineKeyboardButton.WithCallbackData("📋 Список серверов", "cmd:servers") },
+            new[] { InlineKeyboardButton.WithCallbackData("🔑 Мои ключи",       "cmd:mykeys") },
+            new[] { InlineKeyboardButton.WithCallbackData("📡 Мои роутеры",      "cmd:routers") }
+        };
+
+        if (await HasSubscriptionNodesAsync(ct))
+            rows.Add([InlineKeyboardButton.WithCallbackData("📲 Подписка Happ", SubscriptionBotMessages.MenuCallback)]);
+
+        return new InlineKeyboardMarkup(rows);
+    }
 
     private static InlineKeyboardMarkup BackKeyboard() => new(new[]
     {
